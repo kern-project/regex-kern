@@ -1,0 +1,275 @@
+//! Broad regex package smoke tests.
+
+use base.mem.alloc.gpa;
+use base.test;
+use regex.ErrorKind;
+use std.io;
+use sys.mem.page;
+
+// Checks the leftmost span and borrowed text view for a successful search.
+fn expect_find(
+    pattern: &[u8],
+    text: &[u8],
+    start: usize,
+    end: usize,
+) void {
+    let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let gpa = gpa().on(page)..&;
+    defer gpa.deinit();
+
+    let found = regex.find(pattern, text, gpa)
+        .should_ok()
+        .sum(@loc(), t)
+        .should_some()
+        .sum(@loc(), t);
+    found.start
+        .should()
+        .eq(start)
+        .sum(@loc(), t);
+    found.end
+        .should()
+        .eq(end)
+        .sum(@loc(), t);
+    found
+        .text(text)
+        .should()
+        .eq(text.&[start .. end])
+        .sum(@loc(), t);
+}
+
+// Checks search failure without treating it as a regex compile error.
+fn expect_no_match(pattern: &[u8], text: &[u8]) void {
+    let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let gpa = gpa().on(page)..&;
+    defer gpa.deinit();
+
+    regex.find(pattern, text, gpa)
+        .should_ok()
+        .sum(@loc(), t)
+        .should_none()
+        .sum(@loc(), t);
+}
+
+// Checks that invalid patterns report the expected structured error kind.
+fn expect_error(pattern: &[u8], kind: ErrorKind) void {
+    let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let gpa = gpa().on(page)..&;
+    defer gpa.deinit();
+
+    let err = regex.compile(pattern, gpa)
+        .should_err()
+        .sum(@loc(), t);
+    err.kind
+        .should()
+        .eq(kind)
+        .sum(@loc(), t);
+}
+
+// Checks parser offsets for errors that editor integrations can underline.
+fn expect_error_at(
+    pattern: &[u8],
+    kind: ErrorKind,
+    offset: usize,
+) void {
+    let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let gpa = gpa().on(page)..&;
+    defer gpa.deinit();
+
+    let err = regex.compile(pattern, gpa)
+        .should_err()
+        .sum(@loc(), t);
+    err.kind
+        .should()
+        .eq(kind)
+        .sum(@loc(), t);
+    err.offset
+        .should()
+        .eq(offset)
+        .sum(@loc(), t);
+}
+
+// Covers literal bytes and the one-byte wildcard.
+fn check_literals_and_dot() void {
+    expect_find(
+        "",
+        "abc",
+        0,
+        0,
+    );
+    expect_find(
+        "abc",
+        "xxabcdef",
+        2,
+        5,
+    );
+    expect_find(
+        "a.c",
+        "xxabc",
+        2,
+        5,
+    );
+    expect_no_match("a.c", "ac");
+}
+
+// Covers character classes, ranges, negation, and longest same-start matches.
+fn check_classes() void {
+    expect_find(
+        "vk[A-Z]",
+        "call vkCreateInstance",
+        5,
+        8,
+    );
+    expect_find(
+        "vk[A-Z][A-Za-z0-9_]*",
+        "call vkCreateInstance",
+        5,
+        21,
+    );
+    expect_find(
+        "[^0-9]+",
+        "123abc",
+        3,
+        6,
+    );
+    expect_no_match("[a-c]+", "xyz");
+}
+
+// Covers alternation precedence and grouped repetition.
+fn check_alternation_and_groups() void {
+    expect_find(
+        "foo|bar",
+        "xxbar",
+        2,
+        5,
+    );
+    expect_find(
+        "v(k|x)+",
+        "avkkx",
+        1,
+        5,
+    );
+}
+
+// Covers postfix quantifiers and counted repeat bounds.
+fn check_quantifiers() void {
+    expect_find(
+        "a{0}",
+        "bbb",
+        0,
+        0,
+    );
+    expect_find(
+        "a{0,2}b",
+        "aaab",
+        1,
+        4,
+    );
+    expect_find(
+        "ab*c",
+        "abbbc",
+        0,
+        5,
+    );
+    expect_find(
+        "ab+c",
+        "zabbc",
+        1,
+        5,
+    );
+    expect_find(
+        "ab?c",
+        "ac",
+        0,
+        2,
+    );
+    expect_find(
+        "ab{2,3}c",
+        "zabbc",
+        1,
+        5,
+    );
+    expect_find(
+        "ab{2,}c",
+        "zabbbc",
+        1,
+        6,
+    );
+    expect_no_match("ab{2}c", "abc");
+}
+
+// Covers anchored search semantics and whole-text matching.
+fn check_anchors_and_full_match() void {
+    let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let gpa = gpa().on(page)..&;
+    defer gpa.deinit();
+
+    let anchored_ok = regex
+        .matches("^abc$", "abc", gpa)
+        .should_ok()
+        .sum(@loc(), t);
+    anchored_ok.should().sum(@loc(), t);
+    let anchored_fail = regex
+        .matches("^abc$", "xabc", gpa)
+        .should_ok()
+        .sum(@loc(), t);
+    (!anchored_fail).should().sum(@loc(), t);
+
+    let re = regex.compile("abc", gpa).should_ok().sum(@loc(), t)..&;
+    defer re.deinit(gpa);
+    let full_ok = re
+        .is_full_match("abc", gpa)
+        .should_ok()
+        .sum(@loc(), t);
+    full_ok.should().sum(@loc(), t);
+    let full_fail = re
+        .is_full_match("zabc", gpa)
+        .should_ok()
+        .sum(@loc(), t);
+    (!full_fail).should().sum(@loc(), t);
+}
+
+// Covers zero-length match progress so `find_all` cannot loop forever.
+fn check_find_all_progress() void {
+    let t = test.report(io.stderr())..&;
+    let page = page()..&;
+    let gpa = gpa().on(page)..&;
+    defer gpa.deinit();
+
+    let re = regex.compile("a*", gpa).should_ok().sum(@loc(), t)..&;
+    defer re.deinit(gpa);
+
+    let matches = re.find_all("bbb", gpa).should_ok().sum(@loc(), t)..&;
+    defer matches.deinit(gpa);
+    matches
+        .len()
+        .should()
+        .eq(4)
+        .sum(@loc(), t);
+}
+
+// Covers parse errors that callers can branch on without string matching.
+fn check_errors() void {
+    expect_error_at("\\q", ErrorKind.InvalidEscape, 0);
+    expect_error("(abc", ErrorKind.UnclosedGroup);
+    expect_error("[abc", ErrorKind.UnclosedClass);
+    expect_error("[z-a]", ErrorKind.BadRange);
+    expect_error("a{3,2}", ErrorKind.BadRepeat);
+    expect_error("*", ErrorKind.EmptyRepeatTarget);
+}
+
+// Runs the smoke suite as one Craft test target.
+fn main() i32 {
+    check_literals_and_dot();
+    check_classes();
+    check_alternation_and_groups();
+    check_quantifiers();
+    check_anchors_and_full_match();
+    check_find_all_progress();
+    check_errors();
+    return 0;
+}

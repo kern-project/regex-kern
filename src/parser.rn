@@ -1,0 +1,402 @@
+//! Pattern parser for the byte regex grammar.
+
+use base.coll.{List, list};
+use base.mem.alloc.Allocator;
+
+use ..{
+    ByteClass,
+    ClassRange,
+    Error,
+    ErrorKind,
+    err,
+};
+
+/// Parsed regex syntax tree node.
+pub/ enum Ast {
+    /// Empty concatenation, used for empty alternatives and empty patterns.
+    Empty,
+    /// One literal byte.
+    Literal: u8,
+    /// Dot wildcard over one byte.
+    Any,
+    /// Index into `AstProgram.classes`.
+    Class: usize,
+    /// Sequence of two regex fragments.
+    Concat: Pair,
+    /// Alternation between two regex fragments.
+    Alternate: Pair,
+    /// Quantified child fragment.
+    Repeat: Repeat,
+    /// Start-of-text assertion.
+    AssertStart,
+    /// End-of-text assertion.
+    AssertEnd,
+};
+
+/// Pair of child AST node indexes.
+pub/ struct Pair {
+    /// Left child node index.
+    pub left: usize,
+    /// Right child node index.
+    pub right: usize,
+};
+
+/// Parsed quantifier bounds for one child node.
+pub/ struct Repeat {
+    /// Child node index.
+    pub child: usize,
+    /// Minimum repetition count.
+    pub min: usize,
+    /// Maximum repetition count, or `.None` for an unbounded repeat.
+    pub max: ?usize,
+};
+
+/// Complete parsed pattern with owned AST nodes and byte classes.
+pub/ struct AstProgram {
+    /// AST node storage.
+    pub nodes: List[Ast],
+    /// Byte classes referenced by `Ast.Class` nodes.
+    pub classes: List[ByteClass],
+    /// Root AST node index.
+    pub root: usize,
+};
+
+/// Mutable parser state for one pattern.
+pub/ struct Parser {
+    pattern: &[u8],
+    index: usize = 0,
+    nodes: List[Ast],
+    classes: List[ByteClass],
+};
+
+// Keeps parser-originated errors in the shared public error shape.
+fn parse_err(kind: ErrorKind, offset: usize) Error {
+    return err(kind, offset);
+}
+
+// Digits only appear inside repeat bounds.
+fn is_digit(byte: u8) bool {
+    return byte >= b'0' and byte <= b'9';
+}
+
+// `Option` does not have byte equality; keep peek checks local and explicit.
+fn peek_is(value: ?u8, expected: u8) bool {
+    return match (value) {
+        .{ Some: byte } => byte == expected,
+        .None => false,
+    };
+}
+
+// Parses the small escape set supported by the first byte-oriented grammar.
+fn escape_value(byte: u8, offset: usize) u8!Error {
+    return match (byte) {
+        b'n' => .{ Ok: b'\n' },
+        b'r' => .{ Ok: b'\r' },
+        b't' => .{ Ok: b'\t' },
+        b'\\' => .{ Ok: b'\\' },
+        b'.' => .{ Ok: b'.' },
+        b'^' => .{ Ok: b'^' },
+        b'$' => .{ Ok: b'$' },
+        b'|' => .{ Ok: b'|' },
+        b'*' => .{ Ok: b'*' },
+        b'+' => .{ Ok: b'+' },
+        b'?' => .{ Ok: b'?' },
+        b'(' => .{ Ok: b'(' },
+        b')' => .{ Ok: b')' },
+        b'[' => .{ Ok: b'[' },
+        b']' => .{ Ok: b']' },
+        b'{' => .{ Ok: b'{' },
+        b'}' => .{ Ok: b'}' },
+        _ => .{ Err: parse_err(.InvalidEscape, offset) },
+    };
+}
+
+impl &mut Parser {
+    // Appends a node and returns its stable index for parent nodes.
+    fn push(
+        alloc: &mut Allocator,
+        node: Ast,
+        offset: usize,
+    ) usize!Error {
+        let index = self.nodes.len();
+        if (!self.nodes..&.push(alloc, node)) {
+            return .{ Err: parse_err(.OutOfMemory, offset) };
+        }
+        return .{ Ok: index };
+    }
+
+    // Reads the current byte without advancing the parser.
+    fn peek() ?u8 {
+        if (self.index >= #self.pattern) return .None;
+        return .{ Some: self.pattern.[self.index] };
+    }
+
+    // Consumes one byte from the pattern.
+    fn take() ?u8 {
+        let .{ Some: byte } = self.peek() else return .None;
+        self.index += 1;
+        return .{ Some: byte };
+    }
+
+    // Parses an unsigned decimal repeat bound.
+    fn parse_decimal() ?usize {
+        let start = self.index;
+        let mut value = usize.{0};
+        while (self.index < #self.pattern and is_digit(self.pattern.[self.index])) {
+            value = value * 10 + ((self.pattern.[self.index] - b'0') as usize);
+            self.index += 1;
+        }
+        if (self.index == start) return .None;
+        return .{ Some: value };
+    }
+
+    // Parses the byte after a backslash escape.
+    fn parse_escape(offset: usize) u8!Error {
+        let .{ Some: byte } = self.take() else {
+            return .{ Err: parse_err(.InvalidEscape, offset) };
+        };
+        return escape_value(byte, offset);
+    }
+
+    // Parses one byte inside a character class.
+    fn parse_class_byte() u8!Error {
+        let offset = self.index;
+        let .{ Some: byte } = self.take() else {
+            return .{ Err: parse_err(.UnclosedClass, offset) };
+        };
+        if (byte == b'\\') {
+            return self.parse_escape(offset);
+        }
+        if (byte == b']') {
+            return .{ Err: parse_err(.UnclosedClass, offset) };
+        }
+        return .{ Ok: byte };
+    }
+
+    // Parses a bracketed byte class into owned range storage.
+    fn parse_class(alloc: &mut Allocator, offset: usize) usize!Error {
+        let mut negated = false;
+        if (peek_is(self.peek(), b'^')) {
+            _ = self.take();
+            negated = true;
+        }
+
+        let ranges = list[ClassRange]()..&;
+        while (true) {
+            if (self.index >= #self.pattern) {
+                ranges.deinit(alloc);
+                return .{ Err: parse_err(.UnclosedClass, offset) };
+            }
+            if (peek_is(self.peek(), b']')) {
+                _ = self.take();
+                if (ranges.is_empty()) {
+                    ranges.deinit(alloc);
+                    return .{ Err: parse_err(.BadRange, offset) };
+                }
+                let class_index = self.classes.len();
+                if (!self.classes..&.push(alloc, .{ negated: negated, ranges: ranges.* })) {
+                    ranges.deinit(alloc);
+                    return .{ Err: parse_err(.OutOfMemory, offset) };
+                }
+                return self.push(alloc, .{ Class: class_index }, offset);
+            }
+
+            let start = self.parse_class_byte().!;
+            let mut end = start;
+            if (peek_is(self.peek(), b'-')) {
+                _ = self.take();
+                if (peek_is(self.peek(), b']')) {
+                    end = b'-';
+                    if (!ranges.push(alloc, .{ start: start, end: start })) {
+                        ranges.deinit(alloc);
+                        return .{ Err: parse_err(.OutOfMemory, offset) };
+                    }
+                    if (!ranges.push(alloc, .{ start: b'-', end: b'-' })) {
+                        ranges.deinit(alloc);
+                        return .{ Err: parse_err(.OutOfMemory, offset) };
+                    }
+                    continue;
+                }
+                end = self.parse_class_byte().!;
+                if (end < start) {
+                    ranges.deinit(alloc);
+                    return .{ Err: parse_err(.BadRange, self.index) };
+                }
+            }
+            if (!ranges.push(alloc, .{ start: start, end: end })) {
+                ranges.deinit(alloc);
+                return .{ Err: parse_err(.OutOfMemory, offset) };
+            }
+        }
+    }
+
+    // Parses one atom and leaves quantifier handling to `parse_quantified`.
+    fn parse_atom(alloc: &mut Allocator) ?usize!Error {
+        let offset = self.index;
+        let .{ Some: byte } = self.peek() else return .{ Ok: .None };
+        return match (byte) {
+            b'|' => .{ Ok: .None },
+            b')' => .{ Ok: .None },
+            b'.' => {
+                _ = self.take();
+                self.push(alloc, .Any, offset)
+                    .map([](idx: usize) ?usize { return .{ Some: idx }; })
+            },
+            b'^' => {
+                _ = self.take();
+                self.push(alloc, .AssertStart, offset)
+                    .map([](idx: usize) ?usize { return .{ Some: idx }; })
+            },
+            b'$' => {
+                _ = self.take();
+                self.push(alloc, .AssertEnd, offset)
+                    .map([](idx: usize) ?usize { return .{ Some: idx }; })
+            },
+            b'(' => {
+                _ = self.take();
+                let child = self.parse_alternate(alloc).!;
+                let .{ Some: close } = self.take() else {
+                    return .{ Err: parse_err(.UnclosedGroup, offset) };
+                };
+                if (close != b')') {
+                    return .{ Err: parse_err(.UnclosedGroup, offset) };
+                }
+                .{ Ok: .{ Some: child } }
+            },
+            b'[' => {
+                _ = self.take();
+                self.parse_class(alloc, offset)
+                    .map([](idx: usize) ?usize { return .{ Some: idx }; })
+            },
+            b'\\' => {
+                _ = self.take();
+                let literal = self.parse_escape(offset).!;
+                self.push(alloc, .{ Literal: literal }, offset).map([](idx: usize) ?usize {
+                    return .{ Some: idx };
+                })
+            },
+            b'*' => .{ Err: parse_err(.EmptyRepeatTarget, offset) },
+            b'+' => .{ Err: parse_err(.EmptyRepeatTarget, offset) },
+            b'?' => .{ Err: parse_err(.EmptyRepeatTarget, offset) },
+            b'{' => .{ Err: parse_err(.EmptyRepeatTarget, offset) },
+            _ => {
+                _ = self.take();
+                self.push(alloc, .{ Literal: byte }, offset).map([](idx: usize) ?usize {
+                    return .{ Some: idx };
+                })
+            },
+        };
+    }
+
+    // Parses postfix quantifiers on top of one atom.
+    fn parse_quantified(alloc: &mut Allocator) ?usize!Error {
+        let .{ Some: mut node } = self.parse_atom(alloc).! else return .{ Ok: .None };
+        while (true) {
+            let offset = self.index;
+            let .{ Some: byte } = self.peek() else return .{ Ok: .{ Some: node } };
+            match (byte) {
+                b'*' => {
+                    _ = self.take();
+                    node = self.push(
+                        alloc,
+                        .{ Repeat: .{ child: node, min: 0, max: .None } },
+                        offset,
+                    ).!;
+                },
+                b'+' => {
+                    _ = self.take();
+                    node = self.push(
+                        alloc,
+                        .{ Repeat: .{ child: node, min: 1, max: .None } },
+                        offset,
+                    ).!;
+                },
+                b'?' => {
+                    _ = self.take();
+                    node = self.push(
+                        alloc,
+                        .{ Repeat: .{ child: node, min: 0, max: .{ Some: 1 } } },
+                        offset,
+                    ).!;
+                },
+                b'{' => {
+                    _ = self.take();
+                    let .{ Some: min } = self.parse_decimal() else {
+                        return .{ Err: parse_err(.BadRepeat, offset) };
+                    };
+                    let mut max = ?usize.{ Some: min };
+                    if (peek_is(self.peek(), b',')) {
+                        _ = self.take();
+                        max = self.parse_decimal();
+                    }
+                    let .{ Some: close } = self.take() else {
+                        return .{ Err: parse_err(.BadRepeat, offset) };
+                    };
+                    if (close != b'}') {
+                        return .{ Err: parse_err(.BadRepeat, offset) };
+                    }
+                    match (max) {
+                        .{ Some: max_value } => {
+                            if (max_value < min) {
+                                return .{ Err: parse_err(.BadRepeat, offset) };
+                            }
+                        },
+                        .None => {},
+                    }
+                    node = self.push(
+                        alloc,
+                        .{ Repeat: .{ child: node, min, max } },
+                        offset,
+                    ).!;
+                },
+                _ => return .{ Ok: .{ Some: node } },
+            }
+        }
+    }
+
+    // Parses a concatenation until an alternation or group boundary.
+    fn parse_concat(alloc: &mut Allocator) usize!Error {
+        let offset = self.index;
+        let .{ Some: mut root } = self.parse_quantified(alloc).! else {
+            return self.push(alloc, .Empty, offset);
+        };
+        while (true) {
+            let .{ Some: next } = self.parse_quantified(alloc).! else return .{ Ok: root };
+            root = self.push(alloc, .{ Concat: .{ left: root, right: next } }, offset).!;
+        }
+    }
+
+    // Parses alternation at the lowest precedence level.
+    fn parse_alternate(alloc: &mut Allocator) usize!Error {
+        let offset = self.index;
+        let mut root = self.parse_concat(alloc).!;
+        while (peek_is(self.peek(), b'|')) {
+            _ = self.take();
+            let right = self.parse_concat(alloc).!;
+            root = self.push(alloc, .{ Alternate: .{ left: root, right } }, offset).!;
+        }
+        return .{ Ok: root };
+    }
+}
+
+/// Parses a byte regex pattern into an owned AST program.
+pub/ fn parse(pattern: &[u8], alloc: &mut Allocator) AstProgram!Error {
+    let parser = Parser.{
+        pattern: pattern,
+        nodes: list[Ast](),
+        classes: list[ByteClass](),
+    }..&;
+    let root = parser.parse_alternate(alloc).!;
+    if (parser.index < #pattern) {
+        let byte = pattern.[parser.index];
+        if (byte == b')') {
+            parser.nodes..&.deinit(alloc);
+            parser.classes..&.deinit(alloc);
+            return .{ Err: parse_err(.UnclosedGroup, parser.index) };
+        }
+        parser.nodes..&.deinit(alloc);
+        parser.classes..&.deinit(alloc);
+        return .{ Err: parse_err(.BadRepeat, parser.index) };
+    }
+    return .{ Ok: .{ nodes: parser.nodes, classes: parser.classes, root: root } };
+}

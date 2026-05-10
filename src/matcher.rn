@@ -1,0 +1,260 @@
+//! Thompson NFA simulation.
+
+use base.coll.{List, list};
+use base.mem.alloc.Allocator;
+
+use ..{
+    ByteClass,
+    Error,
+    ErrorKind,
+    Inst,
+    Match,
+    Regex,
+    err,
+};
+
+// One active NFA state plus the span captured by Save instructions.
+struct Thread {
+    pc: usize,
+    start: usize,
+    end: usize,
+};
+
+// Matching only fails due to allocation because the NFA is already compiled.
+fn match_err(kind: ErrorKind) Error {
+    return err(kind, 0);
+}
+
+// Tests one byte against a compiled character class.
+fn class_contains(class: &ByteClass, byte: u8) bool {
+    let ranges = class.ranges.&.as_slice();
+    for (range: ranges.iter()) {
+        if (byte >= range.start and byte <= range.end) {
+            return !class.negated;
+        }
+    }
+    return class.negated;
+}
+
+// Keeps epsilon-closure traversal from revisiting the same instruction.
+fn contains_pc(items: &[usize], pc: usize) bool {
+    for (item: items.iter()) {
+        if (item == pc) return true;
+    }
+    return false;
+}
+
+// Appends an active thread while mapping allocation failure into regex errors.
+fn push_thread(
+    out: &mut List[Thread],
+    alloc: &mut Allocator,
+    thread: Thread,
+) void!Error {
+    if (!out.push(alloc, thread)) {
+        return .{ Err: match_err(.OutOfMemory) };
+    }
+    return .{ Ok: {} };
+}
+
+// Computes the epsilon closure for one active state.
+fn add_state(
+    re: &Regex,
+    out: &mut List[Thread],
+    alloc: &mut Allocator,
+    thread: Thread,
+    pos: usize,
+    len: usize,
+) void!Error {
+    let stack = list[Thread]()..&;
+    let visited = list[usize]()..&;
+    defer stack.deinit(alloc);
+    defer visited.deinit(alloc);
+
+    push_thread(stack, alloc, thread).!;
+    while (true) {
+        let .{ Some: item } = stack.pop() else break;
+        if (contains_pc(visited.as_slice(), item.pc)) {
+            continue;
+        }
+        if (!visited.push(alloc, item.pc)) {
+            return .{ Err: match_err(.OutOfMemory) };
+        }
+
+        let .{ Some: inst } = re.insts.&.get(item.pc) else return .{ Ok: {} };
+        match (inst) {
+            .{ Split: split } => {
+                push_thread(stack, alloc, .{
+                    pc: split.second,
+                    start: item.start,
+                    end: item.end,
+                }).!;
+                push_thread(stack, alloc, .{
+                    pc: split.first,
+                    start: item.start,
+                    end: item.end,
+                }).!;
+            },
+            .{ Jump: target } => {
+                push_thread(stack, alloc, .{
+                    pc: target.next,
+                    start: item.start,
+                    end: item.end,
+                }).!;
+            },
+            .{ Save: save } => {
+                let mut next = item;
+                if (save.slot == 0) {
+                    next.start = pos;
+                } else {
+                    next.end = pos;
+                }
+                next.pc = save.next;
+                push_thread(stack, alloc, next).!;
+            },
+            .{ AssertStart: target } => {
+                if (pos == 0) {
+                    push_thread(stack, alloc, .{
+                        pc: target.next,
+                        start: item.start,
+                        end: item.end,
+                    }).!;
+                }
+            },
+            .{ AssertEnd: target } => {
+                if (pos == len) {
+                    push_thread(stack, alloc, .{
+                        pc: target.next,
+                        start: item.start,
+                        end: item.end,
+                    }).!;
+                }
+            },
+            _ => push_thread(out, alloc, item).!,
+        }
+    }
+    return .{ Ok: {} };
+}
+
+// Runs the NFA from one start offset and records the longest match seen.
+fn run_at(
+    re: &Regex,
+    text: &[u8],
+    start: usize,
+    alloc: &mut Allocator,
+) ?Match!Error {
+    let current = list[Thread]()..&;
+    let next = list[Thread]()..&;
+    defer current.deinit(alloc);
+    defer next.deinit(alloc);
+
+    add_state(
+        re,
+        current,
+        alloc,
+        .{ pc: re.start, start, end: start },
+        start,
+        #text,
+    ).!;
+
+    let mut pos = start;
+    let mut best = ?Match.None;
+    while (true) {
+        let threads = current.as_slice();
+        for (thread: threads.iter()) {
+            let .{ Some: inst } = re.insts.&.get(thread.pc) else return .{ Ok: .None };
+            match (inst) {
+                .Match => best = .{ Some: .{ start: thread.start, end: thread.end } },
+                _ => {},
+            }
+        }
+
+        if (pos >= #text) break;
+
+        let byte = text.[pos];
+        next.clear();
+        for (thread: threads.iter()) {
+            let .{ Some: inst } = re.insts.&.get(thread.pc) else return .{ Ok: .None };
+            match (inst) {
+                .{ Byte: byte_inst } => {
+                    if (byte == byte_inst.byte) {
+                        add_state(
+                            re,
+                            next,
+                            alloc,
+                            .{ pc: byte_inst.next, start: thread.start, end: pos + 1 },
+                            pos + 1,
+                            #text,
+                        ).!;
+                    }
+                },
+                .{ Any: target } => {
+                    add_state(
+                        re,
+                        next,
+                        alloc,
+                        .{ pc: target.next, start: thread.start, end: pos + 1 },
+                        pos + 1,
+                        #text,
+                    ).!;
+                },
+                .{ Class: class_inst } => {
+                    let .{ Some: class } = re.classes.&.get(class_inst.class) else {
+                        return .{ Ok: .None };
+                    };
+                    if (class_contains(class.&, byte)) {
+                        add_state(
+                            re,
+                            next,
+                            alloc,
+                            .{ pc: class_inst.next, start: thread.start, end: pos + 1 },
+                            pos + 1,
+                            #text,
+                        ).!;
+                    }
+                },
+                _ => {},
+            }
+        }
+
+        current.clear();
+        let next_threads = next.as_slice();
+        for (thread: next_threads.iter()) {
+            push_thread(current, alloc, thread).!;
+        }
+        pos += 1;
+    }
+
+    return .{ Ok: best };
+}
+
+/// Finds the leftmost match at or after `start`.
+pub/ fn find_from(
+    re: &Regex,
+    text: &[u8],
+    start: usize,
+    alloc: &mut Allocator,
+) ?Match!Error {
+    let mut index = start;
+    while (index <= #text) {
+        let .{ Some: found } = run_at(re, text, index, alloc).! else {
+            index += 1;
+            continue;
+        };
+        return .{ Ok: .{ Some: found } };
+    }
+    return .{ Ok: .None };
+}
+
+/// Finds the leftmost match in `text`.
+pub/ fn find(
+    re: &Regex,
+    text: &[u8],
+    alloc: &mut Allocator,
+) ?Match!Error {
+    return find_from(
+        re,
+        text,
+        0,
+        alloc,
+    );
+}

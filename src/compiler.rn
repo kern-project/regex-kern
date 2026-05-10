@@ -1,0 +1,371 @@
+//! AST to Thompson NFA compiler.
+
+use base.coll.{List, list};
+use base.mem.alloc.{Allocator, arena};
+
+use ..{
+    ByteClass,
+    Error,
+    ErrorKind,
+    Inst,
+    Regex,
+    SplitInst,
+    err,
+};
+use ..parser.{Ast, AstProgram, Repeat};
+
+// A Thompson fragment owns a start instruction and patchable outgoing edges.
+struct Fragment {
+    start: usize,
+    outs: List[usize],
+};
+
+// Keeps compiler-originated errors in the same public error shape.
+fn compile_err(kind: ErrorKind, offset: usize) Error {
+    return err(kind, offset);
+}
+
+// Appends one instruction and returns the index used by later patching.
+fn push_inst(
+    insts: &mut List[Inst],
+    alloc: &mut Allocator,
+    inst: Inst,
+) usize!Error {
+    let index = insts.len();
+    if (!insts.push(alloc, inst)) {
+        return .{ Err: compile_err(.OutOfMemory, 0) };
+    }
+    return .{ Ok: index };
+}
+
+// Creates a patch list containing one instruction index.
+fn single_out(alloc: &mut Allocator, index: usize) List[usize]!Error {
+    let outs = list[usize]()..&;
+    if (!outs.push(alloc, index)) {
+        return .{ Err: compile_err(.OutOfMemory, 0) };
+    }
+    return .{ Ok: outs.* };
+}
+
+// Merges patch lists while preserving left-to-right matching order.
+fn append_outs(
+    target: &mut List[usize],
+    scratch: &mut Allocator,
+    source: &List[usize],
+) void!Error {
+    let items = source.as_slice();
+    for (item: items.iter()) {
+        if (!target.push(scratch, item)) {
+            return .{ Err: compile_err(.OutOfMemory, 0) };
+        }
+    }
+    return .{ Ok: {} };
+}
+
+// Rewrites dangling edges to point at `target`.
+fn patch(
+    insts: &mut List[Inst],
+    outs: &List[usize],
+    target: usize,
+) void {
+    let items = outs.as_slice();
+    for (item: items.iter()) {
+        let .{ Some: inst } = insts.get_ptr(item) else return;
+        match (inst.*) {
+            .{ Byte: old } => inst.* = .{ Byte: .{ byte: old.byte, next: target } },
+            .{ Any: _ } => inst.* = .{ Any: .{ next: target } },
+            .{ Class: old } => inst.* = .{ Class: .{ class: old.class, next: target } },
+            .{ Split: old } => inst.* = .{ Split: .{ first: old.first, second: target } },
+            .{ Jump: _ } => inst.* = .{ Jump: .{ next: target } },
+            .{ Save: old } => inst.* = .{ Save: .{ slot: old.slot, next: target } },
+            .{ AssertStart: _ } => inst.* = .{ AssertStart: .{ next: target } },
+            .{ AssertEnd: _ } => inst.* = .{ AssertEnd: .{ next: target } },
+            _ => {},
+        }
+    }
+}
+
+// Expands `*`, `+`, `?`, and counted repeats into Thompson fragments.
+fn compile_repeat(
+    insts: &mut List[Inst],
+    alloc: &mut Allocator,
+    scratch: &mut Allocator,
+    ast: &AstProgram,
+    repeat: Repeat,
+) Fragment!Error {
+    let .{ Some: max } = repeat.max else {
+        if (repeat.min == 0) {
+            let mut child = compile_node(
+                insts,
+                alloc,
+                scratch,
+                ast,
+                repeat.child,
+            ).!;
+            let split = push_inst(
+                insts,
+                alloc,
+                .{ Split: .{ first: child.start, second: 0 } },
+            ).!;
+            patch(insts, child.outs..&, split);
+            return .{ Ok: .{ start: split, outs: single_out(scratch, split).! } };
+        }
+
+        let mut root = compile_node(
+            insts,
+            alloc,
+            scratch,
+            ast,
+            repeat.child,
+        ).!;
+        let mut count = usize.{1};
+        while (count < repeat.min) {
+            let mut next = compile_node(
+                insts,
+                alloc,
+                scratch,
+                ast,
+                repeat.child,
+            ).!;
+            patch(insts, root.outs..&, next.start);
+            root.outs = next.outs;
+            count += 1;
+        }
+
+        let mut child = compile_node(
+            insts,
+            alloc,
+            scratch,
+            ast,
+            repeat.child,
+        ).!;
+        let split = push_inst(
+            insts,
+            alloc,
+            .{ Split: .{ first: child.start, second: 0 } },
+        ).!;
+        patch(insts, root.outs..&, split);
+        patch(insts, child.outs..&, split);
+        return .{ Ok: .{ start: root.start, outs: single_out(scratch, split).! } };
+    };
+
+    if (max < repeat.min) {
+        return .{ Err: compile_err(.BadRepeat, 0) };
+    }
+
+    if (max == 0) {
+        let jump = push_inst(insts, alloc, .{ Jump: .{ next: 0 } }).!;
+        return .{ Ok: .{ start: jump, outs: single_out(scratch, jump).! } };
+    }
+
+    let mut root = if (repeat.min == 0)
+        Fragment.{ start: 0, outs: list[usize]() }
+    else
+        compile_node(
+            insts,
+            alloc,
+            scratch,
+            ast,
+            repeat.child,
+        ).!;
+
+    let mut count = usize.{1};
+    while (count < repeat.min) {
+        let mut next = compile_node(
+            insts,
+            alloc,
+            scratch,
+            ast,
+            repeat.child,
+        ).!;
+        patch(insts, root.outs..&, next.start);
+        root.outs = next.outs;
+        count += 1;
+    }
+
+    let mut optional = max - repeat.min;
+    while (optional > 0) {
+        let mut child = compile_node(
+            insts,
+            alloc,
+            scratch,
+            ast,
+            repeat.child,
+        ).!;
+        let split = push_inst(
+            insts,
+            alloc,
+            .{ Split: .{ first: child.start, second: 0 } },
+        ).!;
+        if (repeat.min == 0 and optional == max) {
+            root.start = split;
+        } else {
+            patch(insts, root.outs..&, split);
+        }
+        root.outs = single_out(scratch, split).!;
+        append_outs(root.outs..&, scratch, child.outs..&).!;
+        optional -= 1;
+    }
+
+    return .{ Ok: root };
+}
+
+// Compiles one AST node into a Thompson fragment.
+fn compile_node(
+    insts: &mut List[Inst],
+    alloc: &mut Allocator,
+    scratch: &mut Allocator,
+    ast: &AstProgram,
+    node: usize,
+) Fragment!Error {
+    let .{ Some: ast_node } = ast.nodes.&.get(node) else {
+        return .{ Err: compile_err(.BadRepeat, 0) };
+    };
+    match (ast_node) {
+        .Empty => {
+            let jump = push_inst(insts, alloc, .{ Jump: .{ next: 0 } }).!;
+            return .{ Ok: Fragment.{ start: jump, outs: single_out(scratch, jump).! } };
+        },
+        .{ Literal: byte } => {
+            let index = push_inst(insts, alloc, .{ Byte: .{ byte: byte, next: 0 } }).!;
+            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).! } };
+        },
+        .Any => {
+            let index = push_inst(insts, alloc, .{ Any: .{ next: 0 } }).!;
+            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).! } };
+        },
+        .{ Class: class } => {
+            let index = push_inst(insts, alloc, .{ Class: .{ class: class, next: 0 } }).!;
+            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).! } };
+        },
+        .AssertStart => {
+            let index = push_inst(insts, alloc, .{ AssertStart: .{ next: 0 } }).!;
+            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).! } };
+        },
+        .AssertEnd => {
+            let index = push_inst(insts, alloc, .{ AssertEnd: .{ next: 0 } }).!;
+            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).! } };
+        },
+        .{ Concat: pair } => {
+            let mut left = compile_node(
+                insts,
+                alloc,
+                scratch,
+                ast,
+                pair.left,
+            ).!;
+            let right = compile_node(
+                insts,
+                alloc,
+                scratch,
+                ast,
+                pair.right,
+            ).!;
+            patch(insts, left.outs..&, right.start);
+            return .{ Ok: Fragment.{ start: left.start, outs: right.outs } };
+        },
+        .{ Alternate: pair } => {
+            let mut left = compile_node(
+                insts,
+                alloc,
+                scratch,
+                ast,
+                pair.left,
+            ).!;
+            let mut right = compile_node(
+                insts,
+                alloc,
+                scratch,
+                ast,
+                pair.right,
+            ).!;
+            let split = push_inst(
+                insts,
+                alloc,
+                .{ Split: .{ first: left.start, second: right.start } },
+            ).!;
+            let outs = list[usize]()..&;
+            append_outs(outs, scratch, left.outs..&).!;
+            append_outs(outs, scratch, right.outs..&).!;
+            return .{ Ok: Fragment.{ start: split, outs: outs.* } };
+        },
+        .{ Repeat: repeat } => return compile_repeat(insts, alloc, scratch, ast, repeat),
+    }
+}
+
+// Releases class range storage still owned by a list.
+fn deinit_classes(classes: &mut List[ByteClass], alloc: &mut Allocator) void {
+    let mut i = usize.{0};
+    while (i < classes.len()) {
+        let .{ Some: class } = classes.get_ptr(i) else break;
+        class.ranges..&.deinit(alloc);
+        i += 1;
+    }
+    classes.deinit(alloc);
+}
+
+/// Compiles a parsed pattern into an owned Thompson NFA.
+pub/ fn compile(pattern: &[u8], alloc: &mut Allocator) Regex!Error {
+    let ast = ..parser.parse(pattern, alloc).!..&;
+    defer ast.nodes..&.deinit(alloc);
+
+    let scratch_arena = arena().on(alloc)..&;
+    defer scratch_arena.deinit();
+    let scratch = &mut Allocator.{ scratch_arena };
+    let insts = list[Inst]()..&;
+    let .{ Ok: start_save } = push_inst(insts, alloc, .{ Save: .{ slot: 0, next: 0 } }) else {
+        .{ Err: err } => {
+            insts.deinit(alloc);
+            deinit_classes(ast.classes..&, alloc);
+            return .{ Err: err };
+        },
+    };
+    let .{ Ok: mut body } = compile_node(
+        insts,
+        alloc,
+        scratch,
+        ast,
+        ast.root,
+    ) else {
+        .{ Err: err } => {
+            insts.deinit(alloc);
+            deinit_classes(ast.classes..&, alloc);
+            return .{ Err: err };
+        },
+    };
+    let .{ Ok: end_save } = push_inst(insts, alloc, .{ Save: .{ slot: 1, next: 0 } }) else {
+        .{ Err: err } => {
+            insts.deinit(alloc);
+            deinit_classes(ast.classes..&, alloc);
+            return .{ Err: err };
+        },
+    };
+    let .{ Ok: done } = push_inst(insts, alloc, .Match) else {
+        .{ Err: err } => {
+            insts.deinit(alloc);
+            deinit_classes(ast.classes..&, alloc);
+            return .{ Err: err };
+        },
+    };
+    let .{ Ok: start_out } = single_out(scratch, start_save) else {
+        .{ Err: err } => {
+            insts.deinit(alloc);
+            deinit_classes(ast.classes..&, alloc);
+            return .{ Err: err };
+        },
+    };
+    patch(insts, start_out.&, body.start);
+    patch(insts, body.outs..&, end_save);
+    let .{ Ok: end_out } = single_out(scratch, end_save) else {
+        .{ Err: err } => {
+            insts.deinit(alloc);
+            deinit_classes(ast.classes..&, alloc);
+            return .{ Err: err };
+        },
+    };
+    patch(insts, end_out.&, done);
+
+    let classes = ast.classes;
+    ast.classes = list[ByteClass]();
+    return .{ Ok: .{ pattern: pattern, start: start_save, insts: insts.*, classes: classes } };
+}

@@ -1,0 +1,277 @@
+//! Byte-oriented regular expressions for Kern.
+//!
+//! `regex-kern` compiles patterns into a Thompson-style NFA and matches without
+//! recursive backtracking. Matching is search-oriented by default: `matches`
+//! and `find` look for the pattern anywhere in the input, while
+//! `is_full_match` checks the complete byte slice.
+//!
+//! The engine is byte-based. UTF-8 text can be matched as bytes, but Unicode
+//! character classes and grapheme semantics are deliberately not guessed.
+//! Matching methods take an allocator because NFA simulation keeps temporary
+//! active-state lists during the query.
+//!
+//! ## Reusable Regexes
+//!
+//! ```kern
+//! fn find_vk_symbol(gpa: &mut base.mem.alloc.Allocator) void!regex.Error {
+//!     let re = regex.compile("vk[A-Z][A-Za-z0-9_]*", gpa).!..&;
+//!     defer re.deinit(gpa);
+//!
+//!     let found = re.find("call vkCreateInstance", gpa).!;
+//!     _ = found;
+//!     return .{ Ok: {} };
+//! }
+//! ```
+//!
+//! ## One-shot Matching
+//!
+//! ```kern
+//! fn check_name(gpa: &mut base.mem.alloc.Allocator) void!regex.Error {
+//!     let ok = regex.matches("vk[A-Z][A-Za-z0-9_]*", "vkCreateInstance", gpa).!;
+//!     _ = ok;
+//!     return .{ Ok: {} };
+//! }
+//! ```
+
+use base.coll.List;
+use base.mem.alloc.Allocator;
+
+/// Package-internal parser for the byte regex grammar.
+pub/ mod parser;
+/// Package-internal compiler from parsed AST to Thompson NFA instructions.
+pub/ mod compiler;
+/// Package-internal Thompson NFA simulator.
+pub/ mod matcher;
+
+/// Regex parse and compile error categories.
+pub enum ErrorKind {
+    /// A backslash escape is not part of this byte regex grammar.
+    InvalidEscape,
+    /// A group opened with `(` was not closed.
+    UnclosedGroup,
+    /// A character class opened with `[` was not closed.
+    UnclosedClass,
+    /// A class range or empty class is invalid.
+    BadRange,
+    /// A counted repeat such as `{m,n}` is malformed.
+    BadRepeat,
+    /// A postfix quantifier had no atom to repeat.
+    EmptyRepeatTarget,
+    /// Pattern compilation or matching could not allocate required storage.
+    OutOfMemory,
+};
+
+/// Regex parse or compile error with a byte offset in the pattern.
+pub struct Error {
+    /// Error category.
+    pub kind: ErrorKind,
+    /// Byte offset in the pattern where the error was detected.
+    pub offset: usize,
+};
+
+/// A matched byte span inside searched text.
+pub struct Match {
+    /// Inclusive byte offset where the match starts.
+    pub start: usize,
+    /// Exclusive byte offset where the match ends.
+    pub end: usize,
+};
+
+/// One compiled NFA instruction.
+pub/ enum Inst {
+    Byte: ByteInst,
+    Any: OneTarget,
+    Class: ClassInst,
+    Split: SplitInst,
+    Jump: OneTarget,
+    Save: SaveInst,
+    AssertStart: OneTarget,
+    AssertEnd: OneTarget,
+    Match,
+};
+
+/// Byte-match instruction.
+pub/ struct ByteInst {
+    pub byte: u8,
+    pub next: usize,
+};
+
+/// Single-target instruction payload.
+pub/ struct OneTarget {
+    pub next: usize,
+};
+
+/// Byte-class instruction.
+pub/ struct ClassInst {
+    pub class: usize,
+    pub next: usize,
+};
+
+/// Split instruction payload.
+pub/ struct SplitInst {
+    pub first: usize,
+    pub second: usize,
+};
+
+/// Capture-save instruction payload.
+pub/ struct SaveInst {
+    pub slot: usize,
+    pub next: usize,
+};
+
+/// One byte range inside a character class.
+pub/ struct ClassRange {
+    pub start: u8,
+    pub end: u8,
+};
+
+/// Compiled byte class.
+pub/ struct ByteClass {
+    pub negated: bool,
+    pub ranges: List[ClassRange],
+};
+
+/// Owned reusable regular expression.
+pub struct Regex {
+    /// Borrowed source pattern used to build this regex.
+    pub/ pattern: &[u8],
+    /// Entry instruction for the compiled NFA.
+    pub/ start: usize,
+    /// Compiled NFA instructions.
+    pub/ insts: List[Inst],
+    /// Byte classes referenced by `Inst.Class` instructions.
+    pub/ classes: List[ByteClass],
+};
+
+/// Owned list of match spans.
+pub struct MatchList {
+    /// Collected non-overlapping matches.
+    pub/ items: List[Match] = List[Match].{},
+};
+
+/// Builds a regex error value at `offset`.
+pub/ fn err(kind: ErrorKind, offset: usize) Error {
+    return .{ kind, offset };
+}
+
+/// Compiles `pattern` into an owned reusable regex.
+pub fn compile(pattern: &[u8], alloc: &mut Allocator) Regex!Error {
+    return compiler.compile(pattern, alloc);
+}
+
+/// Compiles `pattern` and tests whether it appears in `text`.
+pub fn matches(pattern: &[u8], text: &[u8], alloc: &mut Allocator) bool!Error {
+    let re = compile(pattern, alloc).!..&;
+    defer re.deinit(alloc);
+    return re.matches(text, alloc);
+}
+
+/// Compiles `pattern` and returns the leftmost match in `text`.
+pub fn find(pattern: &[u8], text: &[u8], alloc: &mut Allocator) ?Match!Error {
+    let re = compile(pattern, alloc).!..&;
+    defer re.deinit(alloc);
+    return re.find(text, alloc);
+}
+
+impl Match {
+    /// Returns the bytes covered by this span.
+    pub fn text(source: &[u8]) &[u8] {
+        return source.&[self.start .. self.end];
+    }
+
+    /// Returns the length of this match in bytes.
+    pub fn len() usize {
+        return self.end - self.start;
+    }
+
+    /// Returns true when this is a zero-length match.
+    pub fn is_empty() bool {
+        return self.start == self.end;
+    }
+}
+
+impl &Regex {
+    /// Returns true when this pattern appears anywhere in `text`.
+    pub fn matches(text: &[u8], alloc: &mut Allocator) bool!Error {
+        return self.find(text, alloc).map([](found: ?Match) bool {
+            return found.is_some();
+        });
+    }
+
+    /// Returns true when this pattern matches the whole `text` slice.
+    pub fn is_full_match(text: &[u8], alloc: &mut Allocator) bool!Error {
+        let .{ Some: found } = self.find(text, alloc).! else return .{ Ok: false };
+        return .{ Ok: found.start == 0 and found.end == #text };
+    }
+
+    /// Returns the leftmost match in `text`.
+    pub fn find(text: &[u8], alloc: &mut Allocator) ?Match!Error {
+        return matcher.find(self, text, alloc);
+    }
+
+    /// Returns every non-overlapping match in `text`.
+    pub fn find_all(text: &[u8], alloc: &mut Allocator) MatchList!Error {
+        let out = MatchList.{}..&;
+        let mut index = usize.{0};
+        while (index <= #text) {
+            let .{ Some: found } = matcher.find_from(
+                self,
+                text,
+                index,
+                alloc,
+            ).! else break;
+            if (!out.items..&.push(alloc, found)) {
+                return .{ Err: err(.OutOfMemory, 0) };
+            }
+            if (found.end > index) {
+                index = found.end;
+            } else {
+                index += 1;
+            }
+        }
+        return .{ Ok: out.* };
+    }
+}
+
+impl &mut Regex {
+    /// Releases memory owned by this compiled regex.
+    pub fn deinit(alloc: &mut Allocator) void {
+        let mut i = usize.{0};
+        while (i < self.classes.len()) {
+            let .{ Some: class } = self.classes..&.get_ptr(i) else break;
+            class.ranges..&.deinit(alloc);
+            i += 1;
+        }
+        self.classes..&.deinit(alloc);
+        self.insts..&.deinit(alloc);
+    }
+}
+
+impl &MatchList {
+    /// Returns all match spans as a slice.
+    pub fn as_slice() &[Match] {
+        return self.items.&.as_slice();
+    }
+
+    /// Returns the number of matches.
+    pub fn len() usize {
+        return self.items.&.len();
+    }
+
+    /// Returns true when no matches were collected.
+    pub fn is_empty() bool {
+        return self.items.&.is_empty();
+    }
+
+    /// Returns the match at `index`.
+    pub fn get(index: usize) ?Match {
+        return self.items.&.get(index);
+    }
+}
+
+impl &mut MatchList {
+    /// Releases memory owned by this match list.
+    pub fn deinit(alloc: &mut Allocator) void {
+        self.items..&.deinit(alloc);
+    }
+}

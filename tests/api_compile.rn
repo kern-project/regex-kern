@@ -1,0 +1,38 @@
+//! Compile-time coverage for README-shaped regex flows.
+
+use base.mem.alloc.{Allocator, gpa};
+use regex;
+use sys.mem.page;
+
+enum AppError {
+    Regex: regex.Error,
+}
+
+// Mirrors the README flow so documentation examples stay compile-checked.
+fn app(gpa: &mut Allocator) void!AppError {
+    let re = regex.compile("vk[A-Z][A-Za-z0-9_]*", gpa)
+        .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
+        .!..&;
+    defer re.deinit(gpa);
+
+    let found = re.find("call vkCreateInstance before vkCreateDevice", gpa)
+        .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
+        .!;
+    _ = found;
+
+    let ok = regex.matches("vk[A-Z][A-Za-z0-9_]*", "vkCreateInstance", gpa)
+        .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
+        .!;
+    _ = ok;
+    return .{ Ok: {} };
+}
+
+// Keeps process exit handling at the outer boundary.
+fn main() i32 {
+    let page = page()..&;
+    let gpa = gpa().on(page)..&;
+    defer gpa.deinit();
+
+    let .{ Ok: _ } = app(gpa) else return 1;
+    return 0;
+}
