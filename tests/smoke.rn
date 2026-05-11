@@ -18,7 +18,7 @@ fn expect_find(
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 
-    let found = regex.find(pattern, text, gpa)
+    let found = pattern.regex().find(text, gpa)
         .should_ok()
         .sum(@loc(), t)
         .should_some()
@@ -45,7 +45,7 @@ fn expect_no_match(pattern: &[u8], text: &[u8]) void {
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 
-    regex.find(pattern, text, gpa)
+    pattern.regex().find(text, gpa)
         .should_ok()
         .sum(@loc(), t)
         .should_none()
@@ -59,7 +59,7 @@ fn expect_error(pattern: &[u8], kind: ErrorKind) void {
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 
-    let err = regex.compile(pattern, gpa)
+    let err = pattern.regex().compile(gpa)
         .should_err()
         .sum(@loc(), t);
     err.kind
@@ -79,7 +79,7 @@ fn expect_error_at(
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 
-    let err = regex.compile(pattern, gpa)
+    let err = pattern.regex().compile(gpa)
         .should_err()
         .sum(@loc(), t);
     err.kind
@@ -208,18 +208,18 @@ fn check_anchors_and_full_match() void {
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 
-    let anchored_ok = regex
-        .matches("^abc$", "abc", gpa)
+    let anchored_ok = "^abc$".regex()
+        .matches("abc", gpa)
         .should_ok()
         .sum(@loc(), t);
     anchored_ok.should().sum(@loc(), t);
-    let anchored_fail = regex
-        .matches("^abc$", "xabc", gpa)
+    let anchored_fail = "^abc$".regex()
+        .matches("xabc", gpa)
         .should_ok()
         .sum(@loc(), t);
     (!anchored_fail).should().sum(@loc(), t);
 
-    let re = regex.compile("abc", gpa).should_ok().sum(@loc(), t)..&;
+    let re = "abc".regex().compile(gpa).should_ok().sum(@loc(), t)..&;
     defer re.deinit(gpa);
     let full_ok = re
         .is_full_match("abc", gpa)
@@ -240,7 +240,7 @@ fn check_find_all_progress() void {
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 
-    let re = regex.compile("a*", gpa).should_ok().sum(@loc(), t)..&;
+    let re = "a*".regex().compile(gpa).should_ok().sum(@loc(), t)..&;
     defer re.deinit(gpa);
 
     let matches = re.find_all("bbb", gpa).should_ok().sum(@loc(), t)..&;

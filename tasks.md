@@ -10,10 +10,13 @@ used as a model package.
 - [x] Create a standalone Craft package named `regex` with `src/lib.rn`, focused
   tests, README, MIT license, and no generated public API.
 - [x] Keep the public API fluent and object-oriented:
-  - `regex.compile(pattern, alloc)` creates an owned reusable `Regex`.
-  - `pattern.compile_regex(alloc)` is the fluent compile path for pattern
-    handles.
-  - `regex.matches(pattern, text, alloc)` is a convenient one-shot path.
+  - `pattern.regex()` creates a borrowed pattern handle without colliding with
+    ordinary byte-slice methods.
+  - `pattern.regex().compile(alloc)` creates an owned reusable `Regex`.
+  - `pattern.regex().matches(text, alloc)` is the convenient one-shot path.
+  - `pattern.regex().find(text, alloc)` and
+    `pattern.regex().find_all(text, alloc)` provide one-shot search without
+    module-level duplicate helpers.
   - `re.matches(text, alloc)`, `re.find(text, alloc)`, and
     `re.find_all(text, alloc)` operate from the compiled handle.
   - `Match` carries byte offsets and borrowed text accessors.
@@ -51,8 +54,8 @@ used as a model package.
   `Regex.is_full_match(text, alloc)` for full-string matching.
 - Implement `Regex.find(text, alloc)` returning the leftmost match.
 - [x] Implement `Regex.find_all(text, alloc)` returning owned match spans.
-- [x] Add module-level one-shot helpers for use where the pattern does not need to
-  be reused.
+- [x] Add one-shot pattern receiver helpers for use where the pattern does not
+  need to be reused.
 - [x] Define zero-length match progress rules so `find_all` cannot loop forever.
 
 ## Priority 3: Documentation And Tests

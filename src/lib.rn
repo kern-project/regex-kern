@@ -14,7 +14,7 @@
 //!
 //! ```kern
 //! fn find_vk_symbol(gpa: &mut base.mem.alloc.Allocator) void!regex.Error {
-//!     let re = regex.compile("vk[A-Z][A-Za-z0-9_]*", gpa).!..&;
+//!     let re = "vk[A-Z][A-Za-z0-9_]*".regex().compile(gpa).!..&;
 //!     defer re.deinit(gpa);
 //!
 //!     let found = re.find("call vkCreateInstance", gpa).!;
@@ -27,7 +27,7 @@
 //!
 //! ```kern
 //! fn check_name(gpa: &mut base.mem.alloc.Allocator) void!regex.Error {
-//!     let ok = regex.matches("vk[A-Z][A-Za-z0-9_]*", "vkCreateInstance", gpa).!;
+//!     let ok = "vk[A-Z][A-Za-z0-9_]*".regex().matches("vkCreateInstance", gpa).!;
 //!     _ = ok;
 //!     return .{ Ok: {} };
 //! }
@@ -146,6 +146,12 @@ pub struct Regex {
     pub/ classes: List[ByteClass],
 };
 
+/// Borrowed byte regex pattern handle.
+pub struct Pattern {
+    /// Pattern bytes compiled by this handle.
+    pub raw: &[u8],
+};
+
 /// Owned list of match spans.
 pub struct MatchList {
     /// Collected non-overlapping matches.
@@ -190,51 +196,38 @@ impl &Error : Formatable {
     }
 }
 
-/// Compiles `pattern` into an owned reusable regex.
-pub fn compile(pattern: &[u8], alloc: &mut Allocator) Regex!Error {
-    return compiler.compile(pattern, alloc);
-}
-
-/// Compiles `pattern` and tests whether it appears in `text`.
-pub fn matches(pattern: &[u8], text: &[u8], alloc: &mut Allocator) bool!Error {
-    let re = compile(pattern, alloc).!..&;
-    defer re.deinit(alloc);
-    return re.matches(text, alloc);
-}
-
-/// Compiles `pattern` and returns the leftmost match in `text`.
-pub fn find(pattern: &[u8], text: &[u8], alloc: &mut Allocator) ?Match!Error {
-    let re = compile(pattern, alloc).!..&;
-    defer re.deinit(alloc);
-    return re.find(text, alloc);
-}
-
-/// Compiles `pattern` and returns every non-overlapping match in `text`.
-pub fn find_all(pattern: &[u8], text: &[u8], alloc: &mut Allocator) MatchList!Error {
-    let re = compile(pattern, alloc).!..&;
-    defer re.deinit(alloc);
-    return re.find_all(text, alloc);
-}
-
 impl &[u8] {
-    /// Compiles this byte slice as a reusable regex pattern.
-    pub fn compile_regex(alloc: &mut Allocator) Regex!Error {
-        return compile(self, alloc);
+    /// Treats this byte slice as a regex pattern handle.
+    pub fn regex() Pattern {
+        return .{ raw: self };
+    }
+}
+
+impl Pattern {
+    /// Compiles this pattern as a reusable regex.
+    pub fn compile(alloc: &mut Allocator) Regex!Error {
+        return compiler.compile(self.raw, alloc);
     }
 
     /// Returns true when this pattern appears anywhere in `text`.
-    pub fn matches_regex(text: &[u8], alloc: &mut Allocator) bool!Error {
-        return matches(self, text, alloc);
+    pub fn matches(text: &[u8], alloc: &mut Allocator) bool!Error {
+        let re = self.compile(alloc).!..&;
+        defer re.deinit(alloc);
+        return re.matches(text, alloc);
     }
 
     /// Returns the leftmost match of this pattern in `text`.
-    pub fn find_regex(text: &[u8], alloc: &mut Allocator) ?Match!Error {
-        return find(self, text, alloc);
+    pub fn find(text: &[u8], alloc: &mut Allocator) ?Match!Error {
+        let re = self.compile(alloc).!..&;
+        defer re.deinit(alloc);
+        return re.find(text, alloc);
     }
 
     /// Returns every non-overlapping match of this pattern in `text`.
-    pub fn find_all_regex(text: &[u8], alloc: &mut Allocator) MatchList!Error {
-        return find_all(self, text, alloc);
+    pub fn find_all(text: &[u8], alloc: &mut Allocator) MatchList!Error {
+        let re = self.compile(alloc).!..&;
+        defer re.deinit(alloc);
+        return re.find_all(text, alloc);
     }
 }
 
