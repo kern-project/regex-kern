@@ -10,7 +10,8 @@ enum AppError {
 
 // Mirrors the README flow so documentation examples stay compile-checked.
 fn app(gpa: &mut Allocator) void!AppError {
-    let re = regex.compile("vk[A-Z][A-Za-z0-9_]*", gpa)
+    let pattern = "vk[A-Z][A-Za-z0-9_]*";
+    let re = pattern.compile_regex(gpa)
         .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
         .!..&;
     defer re.deinit(gpa);
@@ -20,10 +21,14 @@ fn app(gpa: &mut Allocator) void!AppError {
         .!;
     _ = found;
 
-    let ok = regex.matches("vk[A-Z][A-Za-z0-9_]*", "vkCreateInstance", gpa)
+    let ok = pattern.matches_regex("vkCreateInstance", gpa)
         .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
         .!;
     _ = ok;
+    let spans = pattern.find_all_regex("vkCreateInstance vkCreateDevice", gpa)
+        .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
+        .!..&;
+    defer spans.deinit(gpa);
     return .{ Ok: {} };
 }
 

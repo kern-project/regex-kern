@@ -37,7 +37,7 @@ enum AppError {
 }
 
 fn app(gpa: &mut Allocator) void!AppError {
-    let re = regex.compile("vk[A-Z][A-Za-z0-9_]*", gpa)
+    let re = "vk[A-Z][A-Za-z0-9_]*".compile_regex(gpa)
         .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
         .!..&;
     defer re.deinit(gpa);
@@ -62,12 +62,14 @@ fn main() i32 {
 Useful entry points:
 
 - `regex.compile(pattern, alloc)` builds an owned reusable `Regex`.
+- `pattern.compile_regex(alloc)` is the fluent form for reusable regexes.
 - `re.matches(text, alloc)` returns true when the pattern appears in `text`.
 - `re.is_full_match(text, alloc)` returns true when the whole text matches.
 - `re.find(text, alloc)` returns the leftmost match span.
 - `re.find_all(text, alloc)` returns owned match spans.
-- `regex.matches(pattern, text, alloc)` and `regex.find(pattern, text, alloc)`
-  are one-shot helpers.
+- `regex.matches(pattern, text, alloc)`, `pattern.matches_regex(text, alloc)`,
+  `regex.find(pattern, text, alloc)`, and `pattern.find_regex(text, alloc)` are
+  one-shot helpers.
 
 ## Errors And Ownership
 

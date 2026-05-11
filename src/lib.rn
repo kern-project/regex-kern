@@ -34,7 +34,8 @@
 //! ```
 
 use base.coll.List;
-use base.mem.alloc.Allocator;
+use base.io.{Formatable, Write};
+use base.mem.alloc.{AllocError, Allocator};
 
 /// Package-internal parser for the byte regex grammar.
 pub/ mod parser;
@@ -57,6 +58,8 @@ pub enum ErrorKind {
     BadRepeat,
     /// A postfix quantifier had no atom to repeat.
     EmptyRepeatTarget,
+    /// Pattern or result storage exceeded addressable capacity.
+    CapacityOverflow,
     /// Pattern compilation or matching could not allocate required storage.
     OutOfMemory,
 };
@@ -154,6 +157,39 @@ pub/ fn err(kind: ErrorKind, offset: usize) Error {
     return .{ kind, offset };
 }
 
+/// Maps allocator failures into the regex error domain at `offset`.
+pub/ fn alloc_err(err: AllocError, offset: usize) Error {
+    match (err) {
+        .CapacityOverflow => return .{ kind: .CapacityOverflow, offset },
+        .OutOfMemory => return .{ kind: .OutOfMemory, offset },
+    }
+}
+
+impl &ErrorKind : Formatable {
+    /// Writes a human-readable regex error category.
+    pub fn write_to(writer: &mut Write) void {
+        match (self.*) {
+            .InvalidEscape => _ = writer.write("invalid regex escape"),
+            .UnclosedGroup => _ = writer.write("unclosed regex group"),
+            .UnclosedClass => _ = writer.write("unclosed regex class"),
+            .BadRange => _ = writer.write("invalid regex range"),
+            .BadRepeat => _ = writer.write("invalid regex repeat"),
+            .EmptyRepeatTarget => _ = writer.write("regex repeat has no target"),
+            .CapacityOverflow => _ = writer.write("capacity overflow"),
+            .OutOfMemory => _ = writer.write("out of memory"),
+        }
+    }
+}
+
+impl &Error : Formatable {
+    /// Writes a human-readable regex error and pattern byte offset.
+    pub fn write_to(writer: &mut Write) void {
+        self.kind.&.write_to(writer);
+        _ = writer.write(" at byte ");
+        self.offset.&.write_to(writer);
+    }
+}
+
 /// Compiles `pattern` into an owned reusable regex.
 pub fn compile(pattern: &[u8], alloc: &mut Allocator) Regex!Error {
     return compiler.compile(pattern, alloc);
@@ -171,6 +207,35 @@ pub fn find(pattern: &[u8], text: &[u8], alloc: &mut Allocator) ?Match!Error {
     let re = compile(pattern, alloc).!..&;
     defer re.deinit(alloc);
     return re.find(text, alloc);
+}
+
+/// Compiles `pattern` and returns every non-overlapping match in `text`.
+pub fn find_all(pattern: &[u8], text: &[u8], alloc: &mut Allocator) MatchList!Error {
+    let re = compile(pattern, alloc).!..&;
+    defer re.deinit(alloc);
+    return re.find_all(text, alloc);
+}
+
+impl &[u8] {
+    /// Compiles this byte slice as a reusable regex pattern.
+    pub fn compile_regex(alloc: &mut Allocator) Regex!Error {
+        return compile(self, alloc);
+    }
+
+    /// Returns true when this pattern appears anywhere in `text`.
+    pub fn matches_regex(text: &[u8], alloc: &mut Allocator) bool!Error {
+        return matches(self, text, alloc);
+    }
+
+    /// Returns the leftmost match of this pattern in `text`.
+    pub fn find_regex(text: &[u8], alloc: &mut Allocator) ?Match!Error {
+        return find(self, text, alloc);
+    }
+
+    /// Returns every non-overlapping match of this pattern in `text`.
+    pub fn find_all_regex(text: &[u8], alloc: &mut Allocator) MatchList!Error {
+        return find_all(self, text, alloc);
+    }
 }
 
 impl Match {
@@ -220,8 +285,9 @@ impl &Regex {
                 index,
                 alloc,
             ).! else break;
-            if (!out.items..&.push(alloc, found)) {
-                return .{ Err: err(.OutOfMemory, 0) };
+            match (out.items..&.try_push(alloc, found)) {
+                .{ Ok: _ } => {},
+                .{ Err: alloc_error } => return .{ Err: alloc_err(alloc_error, 0) },
             }
             if (found.end > index) {
                 index = found.end;

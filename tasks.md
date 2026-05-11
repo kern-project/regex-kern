@@ -7,17 +7,19 @@ used as a model package.
 
 ## Priority 0: Package Shape And Contracts
 
-- Create a standalone Craft package named `regex` with `src/lib.rn`, focused
+- [x] Create a standalone Craft package named `regex` with `src/lib.rn`, focused
   tests, README, MIT license, and no generated public API.
-- Keep the public API fluent and object-oriented:
+- [x] Keep the public API fluent and object-oriented:
   - `regex.compile(pattern, alloc)` creates an owned reusable `Regex`.
+  - `pattern.compile_regex(alloc)` is the fluent compile path for pattern
+    handles.
   - `regex.matches(pattern, text, alloc)` is a convenient one-shot path.
   - `re.matches(text, alloc)`, `re.find(text, alloc)`, and
     `re.find_all(text, alloc)` operate from the compiled handle.
   - `Match` carries byte offsets and borrowed text accessors.
-- Use explicit app-style examples in docs when allocation or parse errors are
+- [x] Use explicit app-style examples in docs when allocation or parse errors are
   involved; do not teach `else return 1` as core library flow.
-- Add compile-only coverage for README-shaped examples so docs and API cannot
+- [x] Add compile-only coverage for README-shaped examples so docs and API cannot
   drift apart.
 
 ## Priority 1: Safe Core Engine
@@ -40,6 +42,7 @@ used as a model package.
   - bad range
   - bad repeat
   - empty repeat target
+  - capacity overflow
   - out of memory
 
 ## Priority 2: Matching API
@@ -47,10 +50,10 @@ used as a model package.
 - Implement `Regex.matches(text, alloc)` for search semantics and
   `Regex.is_full_match(text, alloc)` for full-string matching.
 - Implement `Regex.find(text, alloc)` returning the leftmost match.
-- Implement `Regex.find_all(text, alloc)` returning owned match spans.
-- Add module-level one-shot helpers for use where the pattern does not need to
+- [x] Implement `Regex.find_all(text, alloc)` returning owned match spans.
+- [x] Add module-level one-shot helpers for use where the pattern does not need to
   be reused.
-- Define zero-length match progress rules so `find_all` cannot loop forever.
+- [x] Define zero-length match progress rules so `find_all` cannot loop forever.
 
 ## Priority 3: Documentation And Tests
 

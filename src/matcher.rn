@@ -6,11 +6,10 @@ use base.mem.alloc.Allocator;
 use ..{
     ByteClass,
     Error,
-    ErrorKind,
     Inst,
     Match,
     Regex,
-    err,
+    alloc_err,
 };
 
 // One active NFA state plus the span captured by Save instructions.
@@ -19,11 +18,6 @@ struct Thread {
     start: usize,
     end: usize,
 };
-
-// Matching only fails due to allocation because the NFA is already compiled.
-fn match_err(kind: ErrorKind) Error {
-    return err(kind, 0);
-}
 
 // Tests one byte against a compiled character class.
 fn class_contains(class: &ByteClass, byte: u8) bool {
@@ -50,8 +44,9 @@ fn push_thread(
     alloc: &mut Allocator,
     thread: Thread,
 ) void!Error {
-    if (!out.push(alloc, thread)) {
-        return .{ Err: match_err(.OutOfMemory) };
+    match (out.try_push(alloc, thread)) {
+        .{ Ok: _ } => {},
+        .{ Err: alloc_error } => return .{ Err: alloc_err(alloc_error, 0) },
     }
     return .{ Ok: {} };
 }
@@ -76,8 +71,9 @@ fn add_state(
         if (contains_pc(visited.as_slice(), item.pc)) {
             continue;
         }
-        if (!visited.push(alloc, item.pc)) {
-            return .{ Err: match_err(.OutOfMemory) };
+        match (visited.try_push(alloc, item.pc)) {
+            .{ Ok: _ } => {},
+            .{ Err: alloc_error } => return .{ Err: alloc_err(alloc_error, 0) },
         }
 
         let .{ Some: inst } = re.insts.&.get(item.pc) else return .{ Ok: {} };

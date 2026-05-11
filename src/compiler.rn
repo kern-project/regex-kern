@@ -10,6 +10,7 @@ use ..{
     Inst,
     Regex,
     SplitInst,
+    alloc_err,
     err,
 };
 use ..parser.{Ast, AstProgram, Repeat};
@@ -32,8 +33,9 @@ fn push_inst(
     inst: Inst,
 ) usize!Error {
     let index = insts.len();
-    if (!insts.push(alloc, inst)) {
-        return .{ Err: compile_err(.OutOfMemory, 0) };
+    match (insts.try_push(alloc, inst)) {
+        .{ Ok: _ } => {},
+        .{ Err: alloc_error } => return .{ Err: alloc_err(alloc_error, 0) },
     }
     return .{ Ok: index };
 }
@@ -41,8 +43,9 @@ fn push_inst(
 // Creates a patch list containing one instruction index.
 fn single_out(alloc: &mut Allocator, index: usize) List[usize]!Error {
     let outs = list[usize]()..&;
-    if (!outs.push(alloc, index)) {
-        return .{ Err: compile_err(.OutOfMemory, 0) };
+    match (outs.try_push(alloc, index)) {
+        .{ Ok: _ } => {},
+        .{ Err: alloc_error } => return .{ Err: alloc_err(alloc_error, 0) },
     }
     return .{ Ok: outs.* };
 }
@@ -55,8 +58,9 @@ fn append_outs(
 ) void!Error {
     let items = source.as_slice();
     for (item: items.iter()) {
-        if (!target.push(scratch, item)) {
-            return .{ Err: compile_err(.OutOfMemory, 0) };
+        match (target.try_push(scratch, item)) {
+            .{ Ok: _ } => {},
+            .{ Err: alloc_error } => return .{ Err: alloc_err(alloc_error, 0) },
         }
     }
     return .{ Ok: {} };

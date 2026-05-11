@@ -8,6 +8,7 @@ use ..{
     ClassRange,
     Error,
     ErrorKind,
+    alloc_err,
     err,
 };
 
@@ -119,8 +120,9 @@ impl &mut Parser {
         offset: usize,
     ) usize!Error {
         let index = self.nodes.len();
-        if (!self.nodes..&.push(alloc, node)) {
-            return .{ Err: parse_err(.OutOfMemory, offset) };
+        match (self.nodes..&.try_push(alloc, node)) {
+            .{ Ok: _ } => {},
+            .{ Err: alloc_error } => return .{ Err: alloc_err(alloc_error, offset) },
         }
         return .{ Ok: index };
     }
@@ -194,9 +196,15 @@ impl &mut Parser {
                     return .{ Err: parse_err(.BadRange, offset) };
                 }
                 let class_index = self.classes.len();
-                if (!self.classes..&.push(alloc, .{ negated: negated, ranges: ranges.* })) {
-                    ranges.deinit(alloc);
-                    return .{ Err: parse_err(.OutOfMemory, offset) };
+                match (self.classes..&.try_push(
+                    alloc,
+                    ByteClass.{ negated: negated, ranges: ranges.* },
+                )) {
+                    .{ Ok: _ } => {},
+                    .{ Err: alloc_error } => {
+                        ranges.deinit(alloc);
+                        return .{ Err: alloc_err(alloc_error, offset) };
+                    },
                 }
                 return self.push(alloc, .{ Class: class_index }, offset);
             }
@@ -207,13 +215,19 @@ impl &mut Parser {
                 _ = self.take();
                 if (peek_is(self.peek(), b']')) {
                     end = b'-';
-                    if (!ranges.push(alloc, .{ start: start, end: start })) {
-                        ranges.deinit(alloc);
-                        return .{ Err: parse_err(.OutOfMemory, offset) };
+                    match (ranges.try_push(alloc, ClassRange.{ start: start, end: start })) {
+                        .{ Ok: _ } => {},
+                        .{ Err: alloc_error } => {
+                            ranges.deinit(alloc);
+                            return .{ Err: alloc_err(alloc_error, offset) };
+                        },
                     }
-                    if (!ranges.push(alloc, .{ start: b'-', end: b'-' })) {
-                        ranges.deinit(alloc);
-                        return .{ Err: parse_err(.OutOfMemory, offset) };
+                    match (ranges.try_push(alloc, ClassRange.{ start: b'-', end: b'-' })) {
+                        .{ Ok: _ } => {},
+                        .{ Err: alloc_error } => {
+                            ranges.deinit(alloc);
+                            return .{ Err: alloc_err(alloc_error, offset) };
+                        },
                     }
                     continue;
                 }
@@ -223,9 +237,12 @@ impl &mut Parser {
                     return .{ Err: parse_err(.BadRange, self.index) };
                 }
             }
-            if (!ranges.push(alloc, .{ start: start, end: end })) {
-                ranges.deinit(alloc);
-                return .{ Err: parse_err(.OutOfMemory, offset) };
+            match (ranges.try_push(alloc, ClassRange.{ start: start, end: end })) {
+                .{ Ok: _ } => {},
+                .{ Err: alloc_error } => {
+                    ranges.deinit(alloc);
+                    return .{ Err: alloc_err(alloc_error, offset) };
+                },
             }
         }
     }
