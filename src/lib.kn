@@ -259,7 +259,7 @@ impl &Regex {
     /// Returns true when this pattern matches the whole `text` slice.
     pub fn is_full_match(text: &[u8], alloc: &mut Allocator) bool!Error {
         let .{ Some: found } = self.find(text, alloc).? else return .{ Ok: false };
-        return .{ Ok: found.start == 0 and found.end == text.len() };
+        return .{ Ok: found.start == 0 and found.end == text.@len() };
     }
 
     /// Returns the leftmost match in `text`.
@@ -271,7 +271,7 @@ impl &Regex {
     pub fn find_all(text: &[u8], alloc: &mut Allocator) MatchList!Error {
         let out = MatchList.{}..&;
         let mut index = 0usize;
-        while (index <= text.len()) {
+        while (index <= text.@len()) {
             let .{ Some: found } = matcher.find_from(
                 self,
                 text,

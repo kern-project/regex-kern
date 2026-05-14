@@ -149,7 +149,7 @@ fn run_at(
         alloc,
         .{ pc: re.start, start, end: start },
         start,
-        text.len(),
+        text.@len(),
     ).?;
 
     let mut pos = start;
@@ -164,7 +164,7 @@ fn run_at(
             }
         }
 
-        if (pos >= text.len()) break;
+        if (pos >= text.@len()) break;
 
         let byte = text.[pos];
         next.clear();
@@ -179,7 +179,7 @@ fn run_at(
                             alloc,
                             .{ pc: byte_inst.next, start: thread.start, end: pos + 1 },
                             pos + 1,
-                            text.len(),
+                            text.@len(),
                         ).?;
                     }
                 },
@@ -190,7 +190,7 @@ fn run_at(
                         alloc,
                         .{ pc: target.next, start: thread.start, end: pos + 1 },
                         pos + 1,
-                        text.len(),
+                        text.@len(),
                     ).?;
                 },
                 .{ Class: class_inst } => {
@@ -204,7 +204,7 @@ fn run_at(
                             alloc,
                             .{ pc: class_inst.next, start: thread.start, end: pos + 1 },
                             pos + 1,
-                            text.len(),
+                            text.@len(),
                         ).?;
                     }
                 },
@@ -231,7 +231,7 @@ pub/ fn find_from(
     alloc: &mut Allocator,
 ) ?Match!Error {
     let mut index = start;
-    while (index <= text.len()) {
+    while (index <= text.@len()) {
         let .{ Some: found } = run_at(re, text, index, alloc).? else {
             index += 1;
             continue;

@@ -129,7 +129,7 @@ impl &mut Parser {
 
     // Reads the current byte without advancing the parser.
     fn peek() ?u8 {
-        if (self.index >= self.pattern.len()) return .None;
+        if (self.index >= self.pattern.@len()) return .None;
         return .{ Some: self.pattern.[self.index] };
     }
 
@@ -144,7 +144,7 @@ impl &mut Parser {
     fn parse_decimal() ?usize {
         let start = self.index;
         let mut value = 0usize;
-        while (self.index < self.pattern.len() and is_digit(self.pattern.[self.index])) {
+        while (self.index < self.pattern.@len() and is_digit(self.pattern.[self.index])) {
             value = value * 10 + ((self.pattern.[self.index] - b'0') as usize);
             self.index += 1;
         }
@@ -185,7 +185,7 @@ impl &mut Parser {
 
         let ranges = list[ClassRange]()..&;
         while (true) {
-            if (self.index >= self.pattern.len()) {
+            if (self.index >= self.pattern.@len()) {
                 ranges.deinit(alloc);
                 return .{ Err: parse_err(.UnclosedClass, offset) };
             }
@@ -404,7 +404,7 @@ pub/ fn parse(pattern: &[u8], alloc: &mut Allocator) AstProgram!Error {
         classes: list[ByteClass](),
     }..&;
     let root = parser.parse_alternate(alloc).?;
-    if (parser.index < pattern.len()) {
+    if (parser.index < pattern.@len()) {
         let byte = pattern.[parser.index];
         if (byte == b')') {
             parser.nodes..&.deinit(alloc);
