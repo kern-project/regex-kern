@@ -1,7 +1,7 @@
 [package]
 name = "regex"
 version = "0.1.0"
-kern = "0.7.5"
+kern = "0.7.6"
 publish = true
 description = "Byte-oriented regular expressions for Kern"
 readme = "README.md"
@@ -10,10 +10,10 @@ authors = ["softfault <givenyoung46@gmail.com>"]
 repository = "https://github.com/softfault/regex-kern.git"
 
 [lib]
-root = "src/lib.rn"
+root = "src/lib.kn"
 
 [test]
 roots = [
-    "tests/smoke.rn",
-    "tests/api_compile.rn",
+    "tests/smoke.kn",
+    "tests/api_compile.kn",
 ]

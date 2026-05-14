@@ -29,8 +29,8 @@ regex = { path = "../regex-kern" }
 
 ```kern
 use base.mem.alloc.{Allocator, gpa};
+use std.mem.Page;
 use regex;
-use sys.mem.page;
 
 enum AppError {
     Regex: regex.Error,
@@ -39,18 +39,18 @@ enum AppError {
 fn app(gpa: &mut Allocator) void!AppError {
     let re = "vk[A-Z][A-Za-z0-9_]*".regex().compile(gpa)
         .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
-        .!..&;
+        .?..&;
     defer re.deinit(gpa);
 
     let found = re.find("call vkCreateInstance before vkCreateDevice", gpa)
         .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
-        .!;
+        .?;
     _ = found;
     return .{ Ok: {} };
 }
 
 fn main() i32 {
-    let page = page()..&;
+    let page = Page.{}..&;
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 

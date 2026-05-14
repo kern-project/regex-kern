@@ -1,10 +1,10 @@
 //! Broad regex package smoke tests.
 
 use base.mem.alloc.gpa;
-use base.test;
+use std.mem.Page;
+use base.test.{report};
 use regex.ErrorKind;
 use std.io;
-use sys.mem.page;
 
 // Checks the leftmost span and borrowed text view for a successful search.
 fn expect_find(
@@ -13,8 +13,8 @@ fn expect_find(
     start: usize,
     end: usize,
 ) void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 
@@ -34,14 +34,14 @@ fn expect_find(
     found
         .text(text)
         .should()
-        .eq(text.&[start .. end])
+        .eq(text.&[start...end])
         .sum(@loc(), t);
 }
 
 // Checks search failure without treating it as a regex compile error.
 fn expect_no_match(pattern: &[u8], text: &[u8]) void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 
@@ -54,8 +54,8 @@ fn expect_no_match(pattern: &[u8], text: &[u8]) void {
 
 // Checks that invalid patterns report the expected structured error kind.
 fn expect_error(pattern: &[u8], kind: ErrorKind) void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 
@@ -74,8 +74,8 @@ fn expect_error_at(
     kind: ErrorKind,
     offset: usize,
 ) void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 
@@ -203,8 +203,8 @@ fn check_quantifiers() void {
 
 // Covers anchored search semantics and whole-text matching.
 fn check_anchors_and_full_match() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 
@@ -235,8 +235,8 @@ fn check_anchors_and_full_match() void {
 
 // Covers zero-length match progress so `find_all` cannot loop forever.
 fn check_find_all_progress() void {
-    let t = test.report(io.stderr())..&;
-    let page = page()..&;
+    let t = report(io.stderr())..&;
+    let page = Page.{}..&;
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 
@@ -263,7 +263,8 @@ fn check_errors() void {
 }
 
 // Runs the smoke suite as one Craft test target.
-fn main() i32 {
+#[test]
+fn smoke() i32 {
     check_literals_and_dot();
     check_classes();
     check_alternation_and_groups();

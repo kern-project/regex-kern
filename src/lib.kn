@@ -14,10 +14,10 @@
 //!
 //! ```kern
 //! fn find_vk_symbol(gpa: &mut base.mem.alloc.Allocator) void!regex.Error {
-//!     let re = "vk[A-Z][A-Za-z0-9_]*".regex().compile(gpa).!..&;
+//!     let re = "vk[A-Z][A-Za-z0-9_]*".regex().compile(gpa).?..&;
 //!     defer re.deinit(gpa);
 //!
-//!     let found = re.find("call vkCreateInstance", gpa).!;
+//!     let found = re.find("call vkCreateInstance", gpa).?;
 //!     _ = found;
 //!     return .{ Ok: {} };
 //! }
@@ -27,7 +27,7 @@
 //!
 //! ```kern
 //! fn check_name(gpa: &mut base.mem.alloc.Allocator) void!regex.Error {
-//!     let ok = "vk[A-Z][A-Za-z0-9_]*".regex().matches("vkCreateInstance", gpa).!;
+//!     let ok = "vk[A-Z][A-Za-z0-9_]*".regex().matches("vkCreateInstance", gpa).?;
 //!     _ = ok;
 //!     return .{ Ok: {} };
 //! }
@@ -211,21 +211,21 @@ impl Pattern {
 
     /// Returns true when this pattern appears anywhere in `text`.
     pub fn matches(text: &[u8], alloc: &mut Allocator) bool!Error {
-        let re = self.compile(alloc).!..&;
+        let re = self.compile(alloc).?..&;
         defer re.deinit(alloc);
         return re.matches(text, alloc);
     }
 
     /// Returns the leftmost match of this pattern in `text`.
     pub fn find(text: &[u8], alloc: &mut Allocator) ?Match!Error {
-        let re = self.compile(alloc).!..&;
+        let re = self.compile(alloc).?..&;
         defer re.deinit(alloc);
         return re.find(text, alloc);
     }
 
     /// Returns every non-overlapping match of this pattern in `text`.
     pub fn find_all(text: &[u8], alloc: &mut Allocator) MatchList!Error {
-        let re = self.compile(alloc).!..&;
+        let re = self.compile(alloc).?..&;
         defer re.deinit(alloc);
         return re.find_all(text, alloc);
     }
@@ -234,7 +234,7 @@ impl Pattern {
 impl Match {
     /// Returns the bytes covered by this span.
     pub fn text(source: &[u8]) &[u8] {
-        return source.&[self.start .. self.end];
+        return source.&[self.start...self.end];
     }
 
     /// Returns the length of this match in bytes.
@@ -258,8 +258,8 @@ impl &Regex {
 
     /// Returns true when this pattern matches the whole `text` slice.
     pub fn is_full_match(text: &[u8], alloc: &mut Allocator) bool!Error {
-        let .{ Some: found } = self.find(text, alloc).! else return .{ Ok: false };
-        return .{ Ok: found.start == 0 and found.end == #text };
+        let .{ Some: found } = self.find(text, alloc).? else return .{ Ok: false };
+        return .{ Ok: found.start == 0 and found.end == text.len() };
     }
 
     /// Returns the leftmost match in `text`.
@@ -270,14 +270,14 @@ impl &Regex {
     /// Returns every non-overlapping match in `text`.
     pub fn find_all(text: &[u8], alloc: &mut Allocator) MatchList!Error {
         let out = MatchList.{}..&;
-        let mut index = usize.{0};
-        while (index <= #text) {
+        let mut index = 0usize;
+        while (index <= text.len()) {
             let .{ Some: found } = matcher.find_from(
                 self,
                 text,
                 index,
                 alloc,
-            ).! else break;
+            ).? else break;
             match (out.items..&.try_push(alloc, found)) {
                 .{ Ok: _ } => {},
                 .{ Err: alloc_error } => return .{ Err: alloc_err(alloc_error, 0) },
@@ -295,7 +295,7 @@ impl &Regex {
 impl &mut Regex {
     /// Releases memory owned by this compiled regex.
     pub fn deinit(alloc: &mut Allocator) void {
-        let mut i = usize.{0};
+        let mut i = 0usize;
         while (i < self.classes.len()) {
             let .{ Some: class } = self.classes..&.get_ptr(i) else break;
             class.ranges..&.deinit(alloc);

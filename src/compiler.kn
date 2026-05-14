@@ -105,14 +105,14 @@ fn compile_repeat(
                 scratch,
                 ast,
                 repeat.child,
-            ).!;
+            ).?;
             let split = push_inst(
                 insts,
                 alloc,
                 .{ Split: .{ first: child.start, second: 0 } },
-            ).!;
+            ).?;
             patch(insts, child.outs..&, split);
-            return .{ Ok: .{ start: split, outs: single_out(scratch, split).! } };
+            return .{ Ok: .{ start: split, outs: single_out(scratch, split).? } };
         }
 
         let mut root = compile_node(
@@ -121,8 +121,8 @@ fn compile_repeat(
             scratch,
             ast,
             repeat.child,
-        ).!;
-        let mut count = usize.{1};
+        ).?;
+        let mut count = 1usize;
         while (count < repeat.min) {
             let mut next = compile_node(
                 insts,
@@ -130,7 +130,7 @@ fn compile_repeat(
                 scratch,
                 ast,
                 repeat.child,
-            ).!;
+            ).?;
             patch(insts, root.outs..&, next.start);
             root.outs = next.outs;
             count += 1;
@@ -142,15 +142,15 @@ fn compile_repeat(
             scratch,
             ast,
             repeat.child,
-        ).!;
+        ).?;
         let split = push_inst(
             insts,
             alloc,
             .{ Split: .{ first: child.start, second: 0 } },
-        ).!;
+        ).?;
         patch(insts, root.outs..&, split);
         patch(insts, child.outs..&, split);
-        return .{ Ok: .{ start: root.start, outs: single_out(scratch, split).! } };
+        return .{ Ok: .{ start: root.start, outs: single_out(scratch, split).? } };
     };
 
     if (max < repeat.min) {
@@ -158,8 +158,8 @@ fn compile_repeat(
     }
 
     if (max == 0) {
-        let jump = push_inst(insts, alloc, .{ Jump: .{ next: 0 } }).!;
-        return .{ Ok: .{ start: jump, outs: single_out(scratch, jump).! } };
+        let jump = push_inst(insts, alloc, .{ Jump: .{ next: 0 } }).?;
+        return .{ Ok: .{ start: jump, outs: single_out(scratch, jump).? } };
     }
 
     let mut root = if (repeat.min == 0)
@@ -171,9 +171,9 @@ fn compile_repeat(
             scratch,
             ast,
             repeat.child,
-        ).!;
+        ).?;
 
-    let mut count = usize.{1};
+    let mut count = 1usize;
     while (count < repeat.min) {
         let mut next = compile_node(
             insts,
@@ -181,7 +181,7 @@ fn compile_repeat(
             scratch,
             ast,
             repeat.child,
-        ).!;
+        ).?;
         patch(insts, root.outs..&, next.start);
         root.outs = next.outs;
         count += 1;
@@ -195,19 +195,19 @@ fn compile_repeat(
             scratch,
             ast,
             repeat.child,
-        ).!;
+        ).?;
         let split = push_inst(
             insts,
             alloc,
             .{ Split: .{ first: child.start, second: 0 } },
-        ).!;
+        ).?;
         if (repeat.min == 0 and optional == max) {
             root.start = split;
         } else {
             patch(insts, root.outs..&, split);
         }
-        root.outs = single_out(scratch, split).!;
-        append_outs(root.outs..&, scratch, child.outs..&).!;
+        root.outs = single_out(scratch, split).?;
+        append_outs(root.outs..&, scratch, child.outs..&).?;
         optional -= 1;
     }
 
@@ -227,28 +227,28 @@ fn compile_node(
     };
     match (ast_node) {
         .Empty => {
-            let jump = push_inst(insts, alloc, .{ Jump: .{ next: 0 } }).!;
-            return .{ Ok: Fragment.{ start: jump, outs: single_out(scratch, jump).! } };
+            let jump = push_inst(insts, alloc, .{ Jump: .{ next: 0 } }).?;
+            return .{ Ok: Fragment.{ start: jump, outs: single_out(scratch, jump).? } };
         },
         .{ Literal: byte } => {
-            let index = push_inst(insts, alloc, .{ Byte: .{ byte: byte, next: 0 } }).!;
-            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).! } };
+            let index = push_inst(insts, alloc, .{ Byte: .{ byte: byte, next: 0 } }).?;
+            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).? } };
         },
         .Any => {
-            let index = push_inst(insts, alloc, .{ Any: .{ next: 0 } }).!;
-            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).! } };
+            let index = push_inst(insts, alloc, .{ Any: .{ next: 0 } }).?;
+            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).? } };
         },
         .{ Class: class } => {
-            let index = push_inst(insts, alloc, .{ Class: .{ class: class, next: 0 } }).!;
-            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).! } };
+            let index = push_inst(insts, alloc, .{ Class: .{ class: class, next: 0 } }).?;
+            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).? } };
         },
         .AssertStart => {
-            let index = push_inst(insts, alloc, .{ AssertStart: .{ next: 0 } }).!;
-            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).! } };
+            let index = push_inst(insts, alloc, .{ AssertStart: .{ next: 0 } }).?;
+            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).? } };
         },
         .AssertEnd => {
-            let index = push_inst(insts, alloc, .{ AssertEnd: .{ next: 0 } }).!;
-            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).! } };
+            let index = push_inst(insts, alloc, .{ AssertEnd: .{ next: 0 } }).?;
+            return .{ Ok: Fragment.{ start: index, outs: single_out(scratch, index).? } };
         },
         .{ Concat: pair } => {
             let mut left = compile_node(
@@ -257,14 +257,14 @@ fn compile_node(
                 scratch,
                 ast,
                 pair.left,
-            ).!;
+            ).?;
             let right = compile_node(
                 insts,
                 alloc,
                 scratch,
                 ast,
                 pair.right,
-            ).!;
+            ).?;
             patch(insts, left.outs..&, right.start);
             return .{ Ok: Fragment.{ start: left.start, outs: right.outs } };
         },
@@ -275,22 +275,22 @@ fn compile_node(
                 scratch,
                 ast,
                 pair.left,
-            ).!;
+            ).?;
             let mut right = compile_node(
                 insts,
                 alloc,
                 scratch,
                 ast,
                 pair.right,
-            ).!;
+            ).?;
             let split = push_inst(
                 insts,
                 alloc,
                 .{ Split: .{ first: left.start, second: right.start } },
-            ).!;
+            ).?;
             let outs = list[usize]()..&;
-            append_outs(outs, scratch, left.outs..&).!;
-            append_outs(outs, scratch, right.outs..&).!;
+            append_outs(outs, scratch, left.outs..&).?;
+            append_outs(outs, scratch, right.outs..&).?;
             return .{ Ok: Fragment.{ start: split, outs: outs.* } };
         },
         .{ Repeat: repeat } => return compile_repeat(insts, alloc, scratch, ast, repeat),
@@ -299,7 +299,7 @@ fn compile_node(
 
 // Releases class range storage still owned by a list.
 fn deinit_classes(classes: &mut List[ByteClass], alloc: &mut Allocator) void {
-    let mut i = usize.{0};
+    let mut i = 0usize;
     while (i < classes.len()) {
         let .{ Some: class } = classes.get_ptr(i) else break;
         class.ranges..&.deinit(alloc);
@@ -310,12 +310,12 @@ fn deinit_classes(classes: &mut List[ByteClass], alloc: &mut Allocator) void {
 
 /// Compiles a parsed pattern into an owned Thompson NFA.
 pub/ fn compile(pattern: &[u8], alloc: &mut Allocator) Regex!Error {
-    let ast = ..parser.parse(pattern, alloc).!..&;
+    let ast = ..parser.parse(pattern, alloc).?..&;
     defer ast.nodes..&.deinit(alloc);
 
     let scratch_arena = arena().on(alloc)..&;
     defer scratch_arena.deinit();
-    let scratch = &mut Allocator.{ scratch_arena };
+    let scratch = (scratch_arena as &mut Allocator);
     let insts = list[Inst]()..&;
     let .{ Ok: start_save } = push_inst(insts, alloc, .{ Save: .{ slot: 0, next: 0 } }) else {
         .{ Err: err } => {

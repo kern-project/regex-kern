@@ -1,8 +1,8 @@
 //! Compile-time coverage for README-shaped regex flows.
 
 use base.mem.alloc.{Allocator, gpa};
+use std.mem.Page;
 use regex;
-use sys.mem.page;
 
 enum AppError {
     Regex: regex.Error,
@@ -13,28 +13,29 @@ fn app(gpa: &mut Allocator) void!AppError {
     let pattern = "vk[A-Z][A-Za-z0-9_]*".regex();
     let re = pattern.compile(gpa)
         .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
-        .!..&;
+        .?..&;
     defer re.deinit(gpa);
 
     let found = re.find("call vkCreateInstance before vkCreateDevice", gpa)
         .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
-        .!;
+        .?;
     _ = found;
 
     let ok = pattern.matches("vkCreateInstance", gpa)
         .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
-        .!;
+        .?;
     _ = ok;
     let spans = pattern.find_all("vkCreateInstance vkCreateDevice", gpa)
         .map_err([](err: regex.Error) AppError { return .{ Regex: err }; })
-        .!..&;
+        .?..&;
     defer spans.deinit(gpa);
     return .{ Ok: {} };
 }
 
 // Keeps process exit handling at the outer boundary.
-fn main() i32 {
-    let page = page()..&;
+#[test]
+fn readme_flow() i32 {
+    let page = Page.{}..&;
     let gpa = gpa().on(page)..&;
     defer gpa.deinit();
 

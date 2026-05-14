@@ -65,7 +65,7 @@ fn add_state(
     defer stack.deinit(alloc);
     defer visited.deinit(alloc);
 
-    push_thread(stack, alloc, thread).!;
+    push_thread(stack, alloc, thread).?;
     while (true) {
         let .{ Some: item } = stack.pop() else break;
         if (contains_pc(visited.as_slice(), item.pc)) {
@@ -83,19 +83,19 @@ fn add_state(
                     pc: split.second,
                     start: item.start,
                     end: item.end,
-                }).!;
+                }).?;
                 push_thread(stack, alloc, .{
                     pc: split.first,
                     start: item.start,
                     end: item.end,
-                }).!;
+                }).?;
             },
             .{ Jump: target } => {
                 push_thread(stack, alloc, .{
                     pc: target.next,
                     start: item.start,
                     end: item.end,
-                }).!;
+                }).?;
             },
             .{ Save: save } => {
                 let mut next = item;
@@ -105,7 +105,7 @@ fn add_state(
                     next.end = pos;
                 }
                 next.pc = save.next;
-                push_thread(stack, alloc, next).!;
+                push_thread(stack, alloc, next).?;
             },
             .{ AssertStart: target } => {
                 if (pos == 0) {
@@ -113,7 +113,7 @@ fn add_state(
                         pc: target.next,
                         start: item.start,
                         end: item.end,
-                    }).!;
+                    }).?;
                 }
             },
             .{ AssertEnd: target } => {
@@ -122,10 +122,10 @@ fn add_state(
                         pc: target.next,
                         start: item.start,
                         end: item.end,
-                    }).!;
+                    }).?;
                 }
             },
-            _ => push_thread(out, alloc, item).!,
+            _ => push_thread(out, alloc, item).?,
         }
     }
     return .{ Ok: {} };
@@ -149,8 +149,8 @@ fn run_at(
         alloc,
         .{ pc: re.start, start, end: start },
         start,
-        #text,
-    ).!;
+        text.len(),
+    ).?;
 
     let mut pos = start;
     let mut best = ?Match.None;
@@ -164,7 +164,7 @@ fn run_at(
             }
         }
 
-        if (pos >= #text) break;
+        if (pos >= text.len()) break;
 
         let byte = text.[pos];
         next.clear();
@@ -179,8 +179,8 @@ fn run_at(
                             alloc,
                             .{ pc: byte_inst.next, start: thread.start, end: pos + 1 },
                             pos + 1,
-                            #text,
-                        ).!;
+                            text.len(),
+                        ).?;
                     }
                 },
                 .{ Any: target } => {
@@ -190,8 +190,8 @@ fn run_at(
                         alloc,
                         .{ pc: target.next, start: thread.start, end: pos + 1 },
                         pos + 1,
-                        #text,
-                    ).!;
+                        text.len(),
+                    ).?;
                 },
                 .{ Class: class_inst } => {
                     let .{ Some: class } = re.classes.&.get(class_inst.class) else {
@@ -204,8 +204,8 @@ fn run_at(
                             alloc,
                             .{ pc: class_inst.next, start: thread.start, end: pos + 1 },
                             pos + 1,
-                            #text,
-                        ).!;
+                            text.len(),
+                        ).?;
                     }
                 },
                 _ => {},
@@ -215,7 +215,7 @@ fn run_at(
         current.clear();
         let next_threads = next.as_slice();
         for (thread: next_threads.iter()) {
-            push_thread(current, alloc, thread).!;
+            push_thread(current, alloc, thread).?;
         }
         pos += 1;
     }
@@ -231,8 +231,8 @@ pub/ fn find_from(
     alloc: &mut Allocator,
 ) ?Match!Error {
     let mut index = start;
-    while (index <= #text) {
-        let .{ Some: found } = run_at(re, text, index, alloc).! else {
+    while (index <= text.len()) {
+        let .{ Some: found } = run_at(re, text, index, alloc).? else {
             index += 1;
             continue;
         };
