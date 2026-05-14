@@ -27,3 +27,17 @@ package = "regex 0.1.0 root"
 kind = "test"
 name = "api_compile"
 root = "tests/api_compile.kn"
+
+[[publish-proof]]
+package-id = "regex 0.1.0 root"
+path = "."
+package = "regex"
+version = "0.1.0"
+kern = "0.7.6"
+description = "Byte-oriented regular expressions for Kern"
+license = "MIT"
+authors = ["softfault <givenyoung46@gmail.com>"]
+readme = "README.md"
+repository = "https://github.com/softfault/regex-kern.git"
+manifest-sha256 = "sha256:1b0331aa4b41915a691700d2771e0770756a8bbe66bfc06f91abedcd97c5329a"
+source-sha256 = "sha256:3a395ae4895e501341d5ccc100540c39115b3cc0ebf40f529e3e4a53f55f1eff"
