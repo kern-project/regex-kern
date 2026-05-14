@@ -2,7 +2,6 @@
 name = "regex"
 version = "0.1.0"
 kern = "0.7.6"
-publish = true
 description = "Byte-oriented regular expressions for Kern"
 readme = "README.md"
 license = "MIT"
