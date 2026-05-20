@@ -22,7 +22,7 @@ struct Thread {
 // Tests one byte against a compiled character class.
 fn class_contains(class: &ByteClass, byte: u8) bool {
     let ranges = class.ranges.&.as_slice();
-    for (range: ranges.iter()) {
+    for range in ranges.iter() {
         if (byte >= range.start and byte <= range.end) {
             return !class.negated;
         }
@@ -32,7 +32,7 @@ fn class_contains(class: &ByteClass, byte: u8) bool {
 
 // Keeps epsilon-closure traversal from revisiting the same instruction.
 fn contains_pc(items: &[usize], pc: usize) bool {
-    for (item: items.iter()) {
+    for item in items.iter() {
         if (item == pc) return true;
     }
     return false;
@@ -156,7 +156,7 @@ fn run_at(
     let mut best = ?Match.None;
     while (true) {
         let threads = current.as_slice();
-        for (thread: threads.iter()) {
+        for thread in threads.iter() {
             let .{ Some: inst } = re.insts.&.get(thread.pc) else return .{ Ok: .None };
             match (inst) {
                 .Match => best = .{ Some: .{ start: thread.start, end: thread.end } },
@@ -168,7 +168,7 @@ fn run_at(
 
         let byte = text.[pos];
         next.clear();
-        for (thread: threads.iter()) {
+        for thread in threads.iter() {
             let .{ Some: inst } = re.insts.&.get(thread.pc) else return .{ Ok: .None };
             match (inst) {
                 .{ Byte: byte_inst } => {
@@ -214,7 +214,7 @@ fn run_at(
 
         current.clear();
         let next_threads = next.as_slice();
-        for (thread: next_threads.iter()) {
+        for thread in next_threads.iter() {
             push_thread(current, alloc, thread).?;
         }
         pos += 1;

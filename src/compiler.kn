@@ -57,7 +57,7 @@ fn append_outs(
     source: &List[usize],
 ) void!Error {
     let items = source.as_slice();
-    for (item: items.iter()) {
+    for item in items.iter() {
         match (target.try_push(scratch, item)) {
             .{ Ok: _ } => {},
             .{ Err: alloc_error } => return .{ Err: alloc_err(alloc_error, 0) },
@@ -73,7 +73,7 @@ fn patch(
     target: usize,
 ) void {
     let items = outs.as_slice();
-    for (item: items.iter()) {
+    for item in items.iter() {
         let .{ Some: inst } = insts.get_ptr(item) else return;
         match (inst.*) {
             .{ Byte: old } => inst.* = .{ Byte: .{ byte: old.byte, next: target } },
